@@ -55,6 +55,7 @@ class ConversationState(BaseModel):
     topic_stack: list[str] = Field(default_factory=list)   # e.g. ["school", "exam", "physics stress"]
     current_topic: str | None = None
     previous_topic: str | None = None
+    topic_turn_age: int = 0                  # how many turns have passed since current_topic was active/mentioned
 
     # What Vesper is currently engaged in
     active_joke: str | None = None           # if a joke thread is in progress
@@ -92,23 +93,32 @@ class ConversationState(BaseModel):
 
 
 def _extract_topic(text: str) -> str | None:
-    """Naive topic extraction from the incoming message (single pass)."""
+    """Topic extraction from the incoming message."""
     text_lower = text.lower().strip()
     # Academic
-    if any(w in text_lower for w in ["exam", "test", "padhai", "padh", "study", "hw", "homework", "maths", "physics", "chemistry"]):
+    if any(w in text_lower for w in ["exam", "test", "padhai", "padh", "study", "hw", "homework", "maths", "physics", "chemistry", "tuition", "marks", "board"]):
         return "academics"
     # Social
-    if any(w in text_lower for w in ["riya", "friend", "yaar", "party", "outing", "bunk"]):
+    if any(w in text_lower for w in ["riya", "friend", "yaar", "party", "outing", "bunk", "dost"]):
         return "social"
-    # Entertainment
-    if any(w in text_lower for w in ["reel", "song", "movie", "web series", "spotify", "kya dekh", "kya sun"]):
+    # Entertainment (movies, films, series, songs)
+    if any(w in text_lower for w in ["reel", "song", "movie", "film", "web series", "series", "spotify", "kya dekh", "kya sun", "ok jaanu", "cinema"]):
         return "entertainment"
     # Food
-    if any(w in text_lower for w in ["kha", "khana", "biryani", "pizza", "bhooka", "bhukkad"]):
+    if any(w in text_lower for w in ["kha", "khana", "biryani", "pizza", "bhooka", "bhukkad", "snack"]):
         return "food"
     # Family
     if any(w in text_lower for w in ["mummy", "papa", "bhai", "ghar", "family"]):
         return "family"
+    # Personal status check-in
+    if any(w in text_lower for w in ["tum kya kar", "tu kya kar", "kya kar rahi", "kya kar raha", "kya chal raha", "whats up", "what are you doing"]):
+        return "personal_status"
+    # Stress / Mental break
+    if any(w in text_lower for w in ["mental break", "stress", "boards", "tension", "off ho gaya", "tired"]):
+        return "stress"
+    # Logistical / time
+    if any(w in text_lower for w in ["time", "kitne baje", "kaha milna", "kab"]):
+        return "logistical"
     return None
 
 
@@ -197,7 +207,7 @@ def update_conversation_state(
     if len(recent_strategies) > 5:
         recent_strategies = recent_strategies[-5:]
 
-    # --- Topic stack management ---
+    # --- Topic stack management & aging ---
     topic_stack = list(state.topic_stack)
     new_topic = _extract_topic(incoming_text) if incoming_text else None
     previous_topic = state.current_topic
@@ -206,16 +216,28 @@ def update_conversation_state(
     lower_incoming = incoming_text.lower()
     is_topic_shift = any(sig in lower_incoming for sig in _TOPIC_SHIFT_SIGNALS)
 
+    topic_turn_age = state.topic_turn_age
+
     if is_topic_shift and new_topic:
         topic_stack = [new_topic]   # reset stack on explicit shift
-    elif new_topic and new_topic != state.current_topic:
-        # Sub-topic push (e.g. school → exam → physics)
-        if new_topic not in topic_stack:
+        current_topic = new_topic
+        topic_turn_age = 0
+    elif new_topic:
+        if new_topic != state.current_topic:
             topic_stack.append(new_topic)
-        if len(topic_stack) > 5:
-            topic_stack = topic_stack[-5:]
-
-    current_topic = topic_stack[-1] if topic_stack else state.current_topic
+            if len(topic_stack) > 5:
+                topic_stack = topic_stack[-5:]
+        current_topic = new_topic
+        topic_turn_age = 0
+    else:
+        # No topic mentioned in this incoming turn
+        topic_turn_age += 1
+        if topic_turn_age >= 2:
+            # Active topic has expired / cooled down
+            current_topic = None
+            topic_stack.clear()
+        else:
+            current_topic = topic_stack[-1] if topic_stack else state.current_topic
 
     # --- Recent subjects ring buffer ---
     recent_subjects = list(state.recent_subjects)
@@ -306,6 +328,7 @@ def update_conversation_state(
         topic_stack=topic_stack,
         current_topic=current_topic,
         previous_topic=previous_topic,
+        topic_turn_age=topic_turn_age,
         active_joke=active_joke,
         active_story=state.active_story,
         unanswered_question=unanswered,

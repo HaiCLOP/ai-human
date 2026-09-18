@@ -82,3 +82,15 @@ def test_compliment():
     intent = SocialIntentAnalyzer.analyze(text)
     assert intent.social_act == "compliment"
     assert intent.playfulness >= 0.5
+
+
+def test_question_logistical_time():
+    for q in ["What's the time", "what is the time", "whats the time", "kya time hua", "kitne baje"]:
+        intent = SocialIntentAnalyzer.analyze(q)
+        assert intent.social_act == "question_logistical"
+
+
+def test_schedule_future_completion():
+    for stmt in ["Naa 7 baje hogi", "7 baje khatam", "abhi movie dekh raha hu", "baad me batata hu"]:
+        intent = SocialIntentAnalyzer.analyze(stmt)
+        assert intent.social_act == "schedule_future_completion"

@@ -79,3 +79,50 @@ def test_critic_flags_effort_parity_violation():
     )
     assert not res.passes
     assert any("effort_parity" in iss for iss in res.detected_issues)
+
+
+def test_critic_flags_unsolicited_self_disclosure_on_short_acknowledgment():
+    incoming = "Okayyy"
+    intent = SocialIntentAnalyzer.analyze(incoming)
+    failing_reply = "bas thoda chill music sun rahi hu thoda snack khati thi"
+
+    res = ResponseQualityCritic.evaluate(
+        candidate_reply=failing_reply,
+        incoming_text=incoming,
+        intent=intent,
+        strategy="react_casual",
+    )
+    assert not res.passes
+    assert "unsolicited_self_disclosure_on_acknowledgment" in res.detected_issues
+    assert res.suggested_repair == "haan"
+
+
+def test_critic_flags_temporal_inconsistency_on_ongoing_events():
+    incoming = "Naa 7 baje hogi"
+    intent = SocialIntentAnalyzer.analyze(incoming)
+    failing_reply = "theek hai shayad 7 baje hogi \n film kaisi thi mast thi?"
+
+    res = ResponseQualityCritic.evaluate(
+        candidate_reply=failing_reply,
+        incoming_text=incoming,
+        intent=intent,
+        strategy="continue_topic",
+    )
+    assert not res.passes
+    assert "temporal_inconsistency_past_tense_on_ongoing_event" in res.detected_issues
+    assert res.suggested_repair == "achha theek hai tu dekh le fir"
+
+
+def test_critic_flags_unsolicited_topic_on_time_query():
+    incoming = "What's the time"
+    intent = SocialIntentAnalyzer.analyze(incoming)
+    failing_reply = "abhi 6:33 baje hain, film khatam ho gaya?"
+
+    res = ResponseQualityCritic.evaluate(
+        candidate_reply=failing_reply,
+        incoming_text=incoming,
+        intent=intent,
+        strategy="direct_answer",
+    )
+    assert not res.passes
+    assert "unsolicited_topic_on_logistical_query" in res.detected_issues

@@ -71,6 +71,15 @@ class ConversationManager:
 
         from app.memory.repetition import TopicSaturationCache
         self.repetition_cache = TopicSaturationCache()
+        try:
+            with self.db.transaction() as cur:
+                rows = cur.execute(
+                    "SELECT content FROM messages WHERE sender_type = 'CHARACTER' ORDER BY timestamp_utc DESC LIMIT 10"
+                ).fetchall()
+                recent_msgs = [r["content"] for r in reversed(rows) if r["content"]]
+                self.repetition_cache.seed_from_history(recent_msgs)
+        except Exception:
+            pass
 
         from app.storage.historical_repo import HistoricalRepository
         self.hist_repo = HistoricalRepository(self.db)
@@ -481,6 +490,8 @@ class ConversationManager:
                 incoming_text=clean_text,
                 intent=social_intent,
                 strategy=selected_strategy.strategy_name,
+                state=current_conv_state,
+                delta=state_delta,
             )
 
             if not critic_res.passes:
@@ -517,6 +528,8 @@ class ConversationManager:
                         incoming_text=clean_text,
                         intent=social_intent,
                         strategy=selected_strategy.strategy_name,
+                        state=current_conv_state,
+                        delta=state_delta,
                     )
 
                     if retry_reply and (retry_critic.passes or retry_critic.score > critic_res.score):

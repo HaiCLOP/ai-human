@@ -21,6 +21,10 @@ class TopicSaturationCache:
             "quadratic equations": ["quadratic", "quadratics", "equation", "equations"],
             "physics": ["physics", "verma sir", "friction", "laws of motion"],
             "exams": ["exam", "midterm", "unit test", "board", "pre-board"],
+            "movies_entertainment": ["movie", "film", "cinema", "ok jaanu", "scene"],
+            "music": ["song", "spotify", "music", "gaana", "playlist", "track"],
+            "food": ["khana", "snack", "pizza", "burger", "biryani", "bhookh", "chai"],
+            "gaming": ["game", "gaming", "bgmi", "valorant", "playstation"],
         }
     )
 
@@ -30,6 +34,11 @@ class TopicSaturationCache:
             "ngl", "tbh", "wait", "actually", "sun", "dekho", "kuch nahi", "kch nhi"
         ]
     )
+
+    def seed_from_history(self, messages: list[str]) -> None:
+        """Seed recent messages into cache so it knows topic history immediately."""
+        for msg in messages:
+            self.register_character_message(msg)
 
     def register_character_message(self, text: str) -> None:
         """Record dispatched message and update saturation metrics."""

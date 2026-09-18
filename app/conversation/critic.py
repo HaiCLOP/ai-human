@@ -170,11 +170,46 @@ class ResponseQualityCritic:
             issues.append("question_in_interview_mode")
             score -= 0.35
 
+        # 10. Unsolicited self-disclosure or excessive length on short acknowledgment
+        if intent.social_act == "acknowledgment" and in_count <= 2:
+            self_disclosure_patterns = [
+                r"\b(bas thoda|music sun rahi|snack|chill kar rahi|padh rahi|dekh rahi|khati thi|relax kar rahi)\b",
+            ]
+            if out_count > 4 or any(re.search(p, reply_lower) for p in self_disclosure_patterns):
+                issues.append("unsolicited_self_disclosure_on_acknowledgment")
+                score -= 0.50
+
+        # 11. Temporal inconsistency — asking past tense on ongoing/future events
+        ongoing_signals = [
+            r"\b(naa?|nahi|no)\s+\d+\s+baje\b",
+            r"\b\d+\s+baje\s+(hogi|hoga|khatam)\b",
+            r"\b(dekh raha|dekh rahi|khel raha|khel rahi|padh raha|padh rahi|chal raha|chal rahi)\b",
+            r"\b(baad me|abhi chal)\b",
+        ]
+        past_tense_probes = [
+            r"\b(kaisi thi|kaisa tha|khatam ho gay[ai]|khatam ho chuk[ai]|kaisa laga|kaisi lagi)\b",
+        ]
+        if any(re.search(p, incoming_text.lower()) for p in ongoing_signals):
+            if any(re.search(p, reply_lower) for p in past_tense_probes):
+                issues.append("temporal_inconsistency_past_tense_on_ongoing_event")
+                score -= 0.50
+
+        # 12. Unsolicited topic / interrogation on logistical time query
+        if intent.social_act == "question_logistical":
+            if any(w in incoming_text.lower() for w in ["time", "baje", "ghadi", "clock"]):
+                unsolicited_topics = [r"\b(film|movie|exam|test|homework|tuition)\b"]
+                if any(re.search(p, reply_lower) for p in unsolicited_topics) and "?" in reply_clean:
+                    issues.append("unsolicited_topic_on_logistical_query")
+                    score -= 0.45
+
         score = max(0.0, round(score, 2))
         has_critical_failure = (
             "forbidden_skull_emoji" in issues
             or "rhetorical_insult_echo" in issues
             or "defensive_justification_on_banter" in issues
+            or "unsolicited_self_disclosure_on_acknowledgment" in issues
+            or "temporal_inconsistency_past_tense_on_ongoing_event" in issues
+            or "unsolicited_topic_on_logistical_query" in issues
             or (in_count <= 2 and out_count >= 16)
             or any("ai_tell_pattern" in iss for iss in issues)
             or "vague_non_answer_on_why_probe" in issues
@@ -185,7 +220,11 @@ class ResponseQualityCritic:
         # Construct suggested repair if failed
         suggested_repair = None
         if not passes:
-            if "rhetorical_insult_echo" in issues or "defensive_justification_on_banter" in issues:
+            if "unsolicited_self_disclosure_on_acknowledgment" in issues:
+                suggested_repair = "haan"
+            elif "temporal_inconsistency_past_tense_on_ongoing_event" in issues:
+                suggested_repair = "achha theek hai tu dekh le fir"
+            elif "rhetorical_insult_echo" in issues or "defensive_justification_on_banter" in issues:
                 suggested_repair = "tu bhi kam nahi hai waise"
             elif "forbidden_skull_emoji" in issues:
                 clean_no_skull = reply_clean.replace("💀", "")

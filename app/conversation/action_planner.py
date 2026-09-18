@@ -72,6 +72,7 @@ class ActionPlanner:
         rel = relationship_profile or {}
         mood = mood or MoodVector()
         delta = _get_delta(state_delta)
+        raw_text = getattr(intent, "_raw_text", "") or state.last_user_message or ""
 
         playfulness = rel.get("playfulness", 0.5)
         rel_stage = rel.get("relationship_stage", "friend")
@@ -136,18 +137,19 @@ class ActionPlanner:
         # ═══════════════════════════════════════════════════════
 
         if state.in_interview_mode:
-            # Force a non-question response — react, self-disclose, or observe
-            if energy >= 0.5:
+            # DO NOT override short acknowledgments, closers, or low-effort replies with self-disclosure!
+            if act in ("acknowledgment", "farewell", "reaction_laugh", "agreement") or (raw_text and len(raw_text.split()) <= 2):
+                pass  # Fall through to acknowledgment / closer handling below!
+            elif energy >= 0.5:
                 return PlannedAction(
-                    action=Action.SELF_DISCLOSE,
+                    action=Action.OBSERVE,
                     confidence=0.85,
                     conversational_goal=(
                         "You've been asking too many questions in a row. "
-                        "Don't ask anything this turn. Instead, share something from your own life, "
-                        "drop an observation, or react to what's happening. Keep it casual."
+                        "Don't ask anything this turn. Drop a dry observation or react casually without asking any questions."
                     ),
-                    allow_multi_bubble=True,
-                    brevity_target="short",
+                    allow_multi_bubble=False,
+                    brevity_target="very_short",
                 )
             else:
                 return PlannedAction(
@@ -334,8 +336,47 @@ class ActionPlanner:
                 brevity_target="medium",
             )
 
-        # Direct question
-        if act in ("question_personal", "question_logistical", "question_opinion"):
+        # Direct logistical questions (time, location, links, etc.)
+        if act == "question_logistical":
+            raw_lower = raw_text.lower()
+            if any(w in raw_lower for w in ["time", "baje", "ghadi", "clock"]):
+                return PlannedAction(
+                    action=Action.ANSWER,
+                    confidence=0.92,
+                    conversational_goal=(
+                        "User is asking for the current time. State the current time casually and accurately based on [NOW] "
+                        "(e.g. 'abhi 6:33 ho rahe hain' or '6:33 baje hain'). "
+                        "CRITICAL: Do NOT bring up previous conversation topics, do NOT ask unsolicited questions about movies or homework. "
+                        "Exactly 1 short bubble."
+                    ),
+                    allow_multi_bubble=False,
+                    brevity_target="short",
+                )
+            return PlannedAction(
+                action=Action.ANSWER,
+                confidence=0.88,
+                conversational_goal="Answer the logistical question directly and simply. Keep it short. 1 bubble.",
+                allow_multi_bubble=False,
+                brevity_target="short",
+            )
+
+        # Ongoing activity or future schedule statement (e.g. 'Naa 7 baje hogi', 'dekh raha hu')
+        if act == "schedule_future_completion":
+            return PlannedAction(
+                action=Action.REACT,
+                confidence=0.88,
+                conversational_goal=(
+                    "User stated their current activity (e.g. movie, studying) is still ongoing and finishes later (e.g. at 7). "
+                    "Acknowledge casually and let them finish/enjoy (e.g. 'achha dekh le fir', 'chal enjoy kar baad me batana', 'theek hai 7 baje baat karte hain'). "
+                    "CRITICAL: The activity has NOT finished yet, so NEVER ask how it was in past tense ('kaisi thi'), "
+                    "and do NOT interrogate them with questions while they are watching/busy. Exactly 1 short bubble."
+                ),
+                allow_multi_bubble=False,
+                brevity_target="very_short",
+            )
+
+        # Direct question (personal / opinion)
+        if act in ("question_personal", "question_opinion"):
             return PlannedAction(
                 action=Action.ANSWER,
                 confidence=0.88,
@@ -406,14 +447,16 @@ class ActionPlanner:
                 brevity_target="very_short",
             )
 
-        # Acknowledgment
+        # Acknowledgment / Low-effort Closer
         if act == "acknowledgment":
             return PlannedAction(
                 action=Action.REACT,
-                confidence=0.78,
+                confidence=0.90,
                 conversational_goal=(
-                    "Very short acknowledgment from user. Match their low effort. "
-                    "A single short, natural reaction — 1-5 words max."
+                    "User sent a short acknowledgment or conversation closer (e.g. 'okay', 'okayyy', 'haan', 'hmm', 'theek hai'). "
+                    "Match their low effort with a natural 1-word closer: 'haan', 'yepp', 'yess', 'hmm', or 'chal'. "
+                    "CRITICAL: Do NOT volunteer unprompted information about what you are doing (do NOT say 'bas music sun rahi hu', 'snack kha rahi hu', etc.). "
+                    "If they didn't ask what you're doing, don't tell them! Exactly 1 single word or ultra-short bubble."
                 ),
                 allow_multi_bubble=False,
                 brevity_target="very_short",

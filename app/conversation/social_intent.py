@@ -34,6 +34,7 @@ class SocialIntent(BaseModel):
     )
     requires_response: bool = Field(default=True)
     detected_signals: list[str] = Field(default_factory=list)
+    raw_text: str = Field(default="", description="The raw incoming message text analyzed.")
 
 
 class SocialIntentAnalyzer:
@@ -100,8 +101,15 @@ class SocialIntentAnalyzer:
     ]
 
     QUESTION_LOGISTICAL_PATTERNS = [
-        r"\b(kab|kaha milna|time kya hua|kitne baje|notes bhej|link de|pdf bhej|kahan aana hai)\b",
-        r"\b(what time|when|where should we|send the (notes|link|pdf|doc))\b",
+        r"\b(kab|kaha milna|time kya hua|time kya hai|kya time hua|kya time ho raha|kitne baje|kitna time hua|notes bhej|link de|pdf bhej|kahan aana hai)\b",
+        r"\b(what('s|s| is)? the time|what time is it|what time|when|where should we|send the (notes|link|pdf|doc))\b",
+    ]
+
+    ONGOING_ACTIVITY_OR_FUTURE_SCHEDULE_PATTERNS = [
+        r"\b(naa?|nahi|no)\s+(\d+|kal|shaam|raat)\s*(baje|ko)?\b",
+        r"\b(\d+)\s+baje\s+(hogi|hoga|khatam|over)\b",
+        r"\b(abhi\s+)?(dekh raha|dekh rahi|khel raha|khel rahi|padh raha|padh rahi|chal raha|chal rahi)\b",
+        r"\b(baad me\s+(dekh|bata|karte|kare|batata|batati))\b",
     ]
 
     QUESTION_PERSONAL_PATTERNS = [
@@ -170,7 +178,20 @@ class SocialIntentAnalyzer:
         contact_id: str | None = None,
     ) -> SocialIntent:
         """Analyze message text and optional conversation history into SocialIntent."""
+        intent = cls._analyze_internal(text, context_history=context_history, contact_id=contact_id)
+        clean = text.strip()
+        intent.raw_text = clean
+        intent._raw_text = clean  # type: ignore[attr-defined]
+        return intent
 
+    @classmethod
+    def _analyze_internal(
+        cls,
+        text: str,
+        context_history: list[dict[str, str]] | None = None,
+        contact_id: str | None = None,
+    ) -> SocialIntent:
+        """Internal analyzer implementation."""
         raw_text = text.strip()
         lower = raw_text.lower()
         signals: list[str] = []
@@ -473,6 +494,20 @@ class SocialIntentAnalyzer:
                 playfulness=0.3,
                 expected_reply_length="very_short",
                 requires_response=False,
+                detected_signals=signals,
+            )
+
+        # 15b. Ongoing Activity or Future Schedule Completion (e.g. 'Naa 7 baje hogi', 'dekh raha hu')
+        if any(re.search(p, lower) for p in cls.ONGOING_ACTIVITY_OR_FUTURE_SCHEDULE_PATTERNS):
+            signals.append("ongoing_activity_or_future_schedule_pattern")
+            return SocialIntent(
+                social_act="schedule_future_completion",
+                confidence=0.88,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.2,
+                expected_reply_length="very_short",
+                requires_response=True,
                 detected_signals=signals,
             )
 
