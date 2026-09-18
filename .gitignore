@@ -47,7 +47,7 @@ data/
 browser-profile/
 session/
 cookies/
-storage/
+/storage/
 data/browser_profile/
 
 # Diagnostics & Logs

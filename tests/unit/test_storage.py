@@ -152,3 +152,58 @@ def test_audit_repository(temp_db):
     assert len(events) >= 1
     assert events[0]["event_type"] == "TEST_EVENT"
     assert events[0]["correlation_id"] == "corr-999"
+
+
+def test_reset_conversation_memory_scoped(temp_db):
+    from app.storage.repositories import reset_conversation_memory
+
+    conv_repo = ConversationRepository(temp_db)
+    msg_repo = MessageRepository(temp_db)
+    mem_repo = MemoryRepository(temp_db)
+
+    # Setup 2 users
+    conv_repo.get_or_create("thread_user1", participant_handle="@user1")
+    conv_repo.get_or_create("thread_user2", participant_handle="@user2")
+
+    msg_repo.record_incoming_message("thread_user1", "fp_1", "@user1", "hello from 1")
+    msg_repo.record_incoming_message("thread_user2", "fp_2", "@user2", "hello from 2")
+
+    mem_repo.add_memory("thread_user1", "FACT", "User 1 loves cats")
+    mem_repo.add_memory("thread_user2", "FACT", "User 2 loves dogs")
+
+    # Scoped reset for user1
+    stats = reset_conversation_memory(temp_db, participant_handle="@user1")
+    assert stats["conversations"] >= 1
+    assert stats["messages"] == 1
+    assert stats["memories"] == 1
+
+    # User 1 is wiped
+    assert conv_repo.get("thread_user1") is None
+    assert len(mem_repo.get_memories_for_conversation("thread_user1")) == 0
+
+    # User 2 is preserved
+    assert conv_repo.get("thread_user2") is not None
+    assert len(mem_repo.get_memories_for_conversation("thread_user2")) == 1
+
+
+def test_reset_conversation_memory_global(temp_db):
+    from app.storage.repositories import reset_conversation_memory
+
+    conv_repo = ConversationRepository(temp_db)
+    msg_repo = MessageRepository(temp_db)
+    mem_repo = MemoryRepository(temp_db)
+
+    conv_repo.get_or_create("thread_user1", participant_handle="@user1")
+    msg_repo.record_incoming_message("thread_user1", "fp_1", "@user1", "hello from 1")
+    mem_repo.add_memory("thread_user1", "FACT", "User 1 loves cats")
+
+    # Global reset
+    stats = reset_conversation_memory(temp_db)
+    assert stats["messages"] == 1
+    assert stats["memories"] == 1
+    assert stats["conversations"] == 1
+
+    # All wiped
+    assert conv_repo.get("thread_user1") is None
+    assert len(mem_repo.get_memories_for_conversation("thread_user1")) == 0
+

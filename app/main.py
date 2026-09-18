@@ -310,6 +310,11 @@ def main() -> None:
         action="store_true",
         help="Send message and exit without entering continuous inbox monitor loop.",
     )
+    parser.add_argument(
+        "--reset-memory",
+        action="store_true",
+        help="Reset Vesper's conversation history and dynamic runtime memories (can be targeted with --target).",
+    )
 
     args = parser.parse_args()
 
@@ -320,7 +325,23 @@ def main() -> None:
         log_file_path=settings.resolved_log_file_path,
     )
 
-    if args.setup_login:
+    if args.reset_memory:
+        db = get_db_manager()
+        db.initialize_schema()
+        from app.storage.repositories import reset_conversation_memory
+        stats = reset_conversation_memory(
+            db=db,
+            participant_handle=args.target,
+        )
+        if args.target:
+            print(f"\n[Vesper Memory Reset] Cleared conversation history & dynamic memories for: {args.target}")
+        else:
+            print(f"\n[Vesper Memory Reset] All live conversation history, dynamic memories, and relationship states have been completely reset.")
+        for k, v in stats.items():
+            print(f"  - {k}: {v} cleared/reset")
+        print("\nVesper is now ready to start a fresh conversation slate.\n")
+        sys.exit(0)
+    elif args.setup_login:
         asyncio.run(run_setup_login())
     elif args.reindex_rag:
         asyncio.run(run_reindex_rag())

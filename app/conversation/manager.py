@@ -39,6 +39,7 @@ from app.storage.repositories import (
     AuditRepository,
     ConversationRepository,
     MessageRepository,
+    reset_conversation_memory,
 )
 
 logger = get_logger("conversation.manager")
@@ -96,6 +97,24 @@ class ConversationManager:
         self.life_mgr = LifeEventManager(self.db)
         if self.profile.academics:
             self.life_mgr.sync_academics_from_config(self.profile.academics)
+
+    def reset_runtime_memory(
+        self,
+        conversation_id: str | None = None,
+        participant_handle: str | None = None,
+    ) -> dict[str, int]:
+        """Reset conversation memory in the DB and clear in-memory caches."""
+        stats = reset_conversation_memory(
+            db=self.db,
+            conversation_id=conversation_id,
+            participant_handle=participant_handle,
+        )
+        if conversation_id:
+            self.conversation_states.pop(conversation_id, None)
+        else:
+            self.conversation_states.clear()
+            self.repetition_cache.clear()
+        return stats
 
     async def handle_incoming_message(
         self,
