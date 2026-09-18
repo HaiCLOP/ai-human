@@ -62,10 +62,10 @@ class ChainedFallbackProvider(LLMProvider):
                     ),
                 ),
                 (
-                    "openrouter-llama",
+                    "openrouter-lightning",
                     OpenRouterProvider(
-                        model="meta-llama/llama-3.3-70b-instruct:free",
-                        fallback_model="meta-llama/llama-3.3-70b-instruct",
+                        model="nvidia/nemotron-3.5-lightning:free",
+                        fallback_model="nvidia/nemotron-3.5-lightning",
                     ),
                 ),
             ]

@@ -90,6 +90,25 @@ class OpenRouterProvider(LLMProvider):
                 )
             raise
 
+    @staticmethod
+    def _format_schema_example(schema_cls: type[BaseModel]) -> str:
+        """Format a clean, concise JSON example from a Pydantic model to avoid LLM meta-confusion."""
+        schema = schema_cls.model_json_schema()
+        props = schema.get("properties", {})
+        clean_example: dict[str, Any] = {}
+        for prop_name, prop_meta in props.items():
+            if "enum" in prop_meta:
+                clean_example[prop_name] = " | ".join(str(e) for e in prop_meta["enum"])
+            elif prop_meta.get("type") == "array":
+                clean_example[prop_name] = ["string"]
+            elif prop_meta.get("type") == "string":
+                clean_example[prop_name] = prop_meta.get("description", "string")
+            elif "anyOf" in prop_meta:
+                clean_example[prop_name] = None
+            else:
+                clean_example[prop_name] = prop_meta.get("type", "string")
+        return json.dumps(clean_example, indent=2)
+
     async def _call_model(
         self,
         model_name: str,
@@ -101,7 +120,7 @@ class OpenRouterProvider(LLMProvider):
     ) -> LLMResponse:
         temp = temperature if temperature is not None else self.temperature
         tokens = max_tokens if max_tokens is not None else self.max_output_tokens
-        # Reasoning models (like Qwen 3.8 / Nemotron) consume tokens for internal thinking; ensure at least 800 tokens so JSON isn't truncated
+        # Reasoning models consume tokens for internal thinking; ensure at least 800 tokens so JSON isn't truncated
         effective_tokens = max(tokens, 800) if ("qwen" in model_name.lower() or "free" in model_name.lower()) else tokens
 
         messages: list[dict[str, str]] = []
@@ -110,8 +129,12 @@ class OpenRouterProvider(LLMProvider):
 
         user_content = prompt
         if response_schema:
-            schema_json = json.dumps(response_schema.model_json_schema())
-            user_content = f"{prompt}\n\nIMPORTANT: Respond with ONLY a valid JSON object matching this schema:\n{schema_json}"
+            clean_schema = self._format_schema_example(response_schema)
+            user_content = (
+                f"{prompt}\n\n"
+                f"IMPORTANT: Respond with ONLY a valid JSON object matching this structure (no markdown, no preamble, no text outside JSON):\n"
+                f"{clean_schema}"
+            )
 
         messages.append({"role": "user", "content": user_content})
 
@@ -127,7 +150,10 @@ class OpenRouterProvider(LLMProvider):
             "messages": messages,
             "temperature": temp,
             "max_tokens": effective_tokens,
+            "reasoning": {"effort": "none", "exclude": True},
         }
+        if response_schema:
+            payload["response_format"] = {"type": "json_object"}
 
         last_error: Exception | None = None
 
@@ -219,33 +245,37 @@ class OpenRouterProvider(LLMProvider):
 
         if not cleaned.startswith("{"):
             fb = cleaned.find("{")
-            lb = cleaned.rfind("}")
-            if fb != -1 and lb != -1 and lb > fb:
-                cleaned = cleaned[fb : lb + 1].strip()
+            if fb != -1:
+                lb = cleaned.rfind("}")
+                if lb != -1 and lb > fb:
+                    cleaned = cleaned[fb : lb + 1].strip()
+                else:
+                    cleaned = cleaned[fb:].strip()
 
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Suffix completion repair
-            for suffix in ['"}', '"}}', '"}', '}', ']}}']:
+            # Suffix completion repair for truncated JSON
+            for suffix in ['"}', '"}}', '}', ']}', ']}}', '"]}', '", "bubbles": []}']:
                 try:
                     return json.loads(cleaned + suffix)
                 except Exception:
                     continue
 
-            # Fallback regex extraction of bubbles
+            # Fallback regex extraction of bubbles and reply_text
             b_match = re.search(r'"bubbles"\s*:\s*(\[[^\]]+\])', cleaned)
             r_match = re.search(r'"reply_text"\s*:\s*"([^"]+)"', cleaned)
-            if b_match:
+            if b_match or r_match:
                 try:
-                    bubbles = json.loads(b_match.group(1))
-                    reply_text = r_match.group(1) if r_match else " ".join(bubbles)
-                    return {
-                        "intent": "REPLY",
-                        "reply_text": reply_text,
-                        "bubbles": bubbles,
-                        "internal_reasoning": "Extracted via regex fallback",
-                    }
+                    bubbles = json.loads(b_match.group(1)) if b_match else []
+                    reply_text = r_match.group(1) if r_match else (" ".join(bubbles) if bubbles else "")
+                    if bubbles or reply_text:
+                        return {
+                            "intent": "REPLY",
+                            "reply_text": reply_text or (bubbles[0] if bubbles else ""),
+                            "bubbles": bubbles if bubbles else [reply_text],
+                            "internal_reasoning": "Extracted via regex fallback",
+                        }
                 except Exception:
                     pass
 
