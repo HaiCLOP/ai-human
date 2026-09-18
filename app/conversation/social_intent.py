@@ -65,6 +65,7 @@ class SocialIntentAnalyzer:
     TEASING_PATTERNS = [
         r"\b(bade log|hero ban raha|ameer log|rich kid|flex mat kar|tu to rehne hi de)\b",
         r"\b(itna attitude|bhav mat kha|kareebi|overacting|dramaqueen)\b",
+        r"\b(reject kar diya|reject kiya|gussa hu|gussa hoon|naraz hu|naraz hoon|bhaav kha rahi|dil tod diya|dil todti|ignore kar rahi|ignore kiya)\b",
     ]
 
     COMPLIMENT_PATTERNS = [

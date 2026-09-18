@@ -233,17 +233,19 @@ class ActionPlanner:
                     brevity_target="very_short",
                 )
 
-        # Teasing
+        # Teasing / Faux Drama
         if act == "teasing":
             if is_close and social_energy >= 0.5:
                 return PlannedAction(
                     action=Action.TEASE,
                     confidence=0.85,
                     conversational_goal=(
-                        "User is teasing you. Tease back — match the energy, keep it casual and self-assured. "
-                        "Don't over-explain. Short and natural."
+                        "User is teasing, acting dramatic, or mock-complaining (e.g. saying you rejected them or they are angry). "
+                        "Tease back playfully with dry Delhi humor (e.g. 'dramebaaz', 'drama band kar apna 😂', 'itna jaldi gussa ho gaya?'). "
+                        "NEVER apologize seriously, NEVER act defensive, NEVER say 'pressure mat de' or 'normal baat kar'. "
+                        "Keep it 1 single, punchy bubble."
                     ),
-                    allow_multi_bubble=True,
+                    allow_multi_bubble=False,
                     brevity_target="short",
                 )
 

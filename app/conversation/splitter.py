@@ -43,47 +43,15 @@ class MultiBubbleSplitter:
             if len(lines) > 1:
                 return lines[:3]
 
-        words = clean.split()
+        # Rule 1: Split on explicit sentence boundaries (. ! ?) only if each sentence has >= 3 words
+        raw_sentences = [p.strip() for p in cls.SENTENCE_SPLIT_REGEX.split(clean) if p.strip()]
+        if len(raw_sentences) > 1:
+            meaningful = [s for s in raw_sentences if len(s.split()) >= 3]
+            if len(meaningful) > 1:
+                return [re.sub(r"(?<!\.)\.(?!\.)\s*$", "", s).strip() for s in raw_sentences[:3]]
 
-        # Rule 1: Short text remains a single bubble
-        if len(words) <= 7 or len(clean) <= 45:
-            return [clean]
-
-        # Rule 2: Split on sentence boundaries (. ! ?)
-        parts = [p.strip() for p in cls.SENTENCE_SPLIT_REGEX.split(clean) if p.strip()]
-
-        # Rule 3: Split on conversational clause shifts (e.g. "...tu bata kya chal raha hai")
-        if len(parts) == 1:
-            clause_parts = [p.strip() for p in cls.CLAUSE_SPLIT_REGEX.split(clean) if p.strip()]
-            if len(clause_parts) > 1:
-                parts = clause_parts
-
-        # Rule 4: If only 1 part was found, split on coordinating conjunctions with commas
-        if len(parts) == 1:
-            parts = [p.strip() for p in cls.CONJUNCTION_SPLIT_REGEX.split(clean) if p.strip()]
-
-        # Rule 5: Split on comma if sentence is long (> 10 words)
-        if len(parts) == 1 and len(words) > 10 and "," in clean:
-            comma_parts = [p.strip() for p in clean.split(",", 1) if p.strip()]
-            if len(comma_parts) > 1:
-                parts = comma_parts
-
-        # Rule 6: Hard cap of 3 bubbles
-        if len(parts) > 3:
-            parts = [parts[0], parts[1], " ".join(parts[2:])]
-
-        # Rule 7: Merge tiny orphan fragments (< 2 words or < 6 chars) into preceding bubble
-        refined: list[str] = []
-        for p in parts:
-            clean_p = re.sub(r"(?<!\.)\.(?!\.)\s*$", "", p).strip()
-            if not clean_p:
-                continue
-            if refined and (len(clean_p.split()) <= 1 and len(clean_p) < 8):
-                refined[-1] = f"{refined[-1]} {clean_p}".strip()
-            else:
-                refined.append(clean_p)
-
-        return refined if refined else [re.sub(r"(?<!\.)\.(?!\.)\s*$", "", clean).strip()]
+        # Otherwise, keep as a single clean cohesive bubble (prevents unwanted double texting)
+        return [re.sub(r"(?<!\.)\.(?!\.)\s*$", "", clean).strip()]
 
 
 def calculate_bubble_cadence(

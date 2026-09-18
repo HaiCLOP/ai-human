@@ -114,7 +114,7 @@ async def test_mock_typing_and_sending(temp_db):
         input_el = await page.query_selector("div[role='textbox']")
         assert input_el is not None
         typed_content = await input_el.inner_text()
-        assert test_text in typed_content
+        assert test_text.rstrip(".") in typed_content
 
         await browser.close()
 
