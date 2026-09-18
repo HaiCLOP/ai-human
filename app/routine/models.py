@@ -80,3 +80,30 @@ class AcademicContext:
     subjects_summary: list[str]
     upcoming_exams_summary: list[str]
     pending_homework_summary: list[str]
+
+
+@dataclass
+class VesperLifeState:
+    """Authoritative simulated life state for Vesper."""
+
+    activity: str
+    location: str
+    current_task: str
+    energy: float
+    mood_label: str
+    free_time: bool
+    next_event: str
+    unfinished_thought: str
+
+    def to_prompt_text(self) -> str:
+        return (
+            f"[VESPER LIFE STATE — AUTHORITATIVE]\n"
+            f"activity: {self.activity}\n"
+            f"location: {self.location}\n"
+            f"current_task: {self.current_task}\n"
+            f"energy: {round(self.energy, 2)}\n"
+            f"mood: {self.mood_label}\n"
+            f"free_time: {'yes' if self.free_time else 'no'}\n"
+            f"next_event: {self.next_event}\n"
+            f"unfinished_thought: {self.unfinished_thought}"
+        )

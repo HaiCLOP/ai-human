@@ -14,6 +14,7 @@ from app.ai.validator import ResponseValidator, ValidationResult
 from app.conversation.action_planner import ActionPlanner
 from app.conversation.chemistry import ChemistryModel
 from app.conversation.critic import ResponseQualityCritic
+from app.conversation.policy import ConversationPolicy
 from app.conversation.response_intent import build_response_intent, format_now_block
 from app.conversation.response_strategy import ResponseStrategySelector
 from app.conversation.situation_retriever import SituationAwareRetriever
@@ -30,7 +31,7 @@ from app.memory.manager import MemoryManager
 from app.memory.style import StyleLearner
 from app.rag.retriever import LocalRAGRetriever
 from app.routine.life_events import LifeEventManager
-from app.routine.manager import RoutineManager
+from app.routine.manager import RoutineManager, to_ist
 from app.routine.models import AvailabilityState
 from app.routine.mood import MoodEngine
 from app.storage.database import DatabaseManager, get_db_manager
@@ -108,7 +109,7 @@ class ConversationManager:
         """Process inbound message through complete cognitive cycle, obeying real-time availability."""
         cid = correlation_id or str(uuid.uuid4())
         bind_correlation_id(cid)
-        now = simulated_time or datetime.now(timezone.utc)
+        now = to_ist(simulated_time)
 
         clean_text = message_text.strip()
         if not clean_text:
@@ -218,6 +219,13 @@ class ConversationManager:
                 pending_homework=self.life_mgr.academic_repo.get_pending_homework(),
             )
             emotional_state_notes = MoodEngine.to_prompt_descriptor(mood)
+
+            # Authoritative Life State (IST)
+            life_state = self.routine_mgr.build_life_state(
+                now=now,
+                pending_homework=self.life_mgr.academic_repo.get_pending_homework(),
+                mood=mood,
+            )
 
             # 8. Context Assembly
             style_notes = self.style_learner.get_style_notes_for_prompt(conversation_id)
@@ -359,6 +367,17 @@ class ConversationManager:
                 f"Multi-bubble allowed: {'yes' if planned_action_result.allow_multi_bubble else 'no'}"
             )
 
+            # Conversational Policy: WHAT should Vesper contribute?
+            contribution_plan = ConversationPolicy.evaluate(
+                clean_text=clean_text,
+                social_intent=social_intent,
+                state=current_conv_state,
+                life_state=life_state,
+                rel_style=rel_style_dict,
+                mood=mood,
+                current_dt=now,
+            )
+
             logger.info(
                 "action.planned",
                 action=planned_action_result.action.value,
@@ -451,7 +470,8 @@ class ConversationManager:
                 historical_examples=historical_turn_examples,
                 planned_action=planned_action_str,
                 conversation_state_notes=conv_state_notes,
-
+                contribution_plan=contribution_plan,
+                life_state=life_state,
                 now_block=now_block_str,
                 # Legacy pass-through (silently accepted)
                 user_style_notes=style_notes,
@@ -484,7 +504,8 @@ class ConversationManager:
             elif not candidate_reply and raw_bubbles:
                 candidate_reply = " \n ".join(str(b) for b in raw_bubbles)
 
-            # 9b. Response Quality Critic
+            # 9b. Response Quality Critic (Critic V2)
+            recent_character_replies = [m.content for m in history if m.sender_type == "CHARACTER"]
             critic_res = ResponseQualityCritic.evaluate(
                 candidate_reply=candidate_reply,
                 incoming_text=clean_text,
@@ -492,26 +513,34 @@ class ConversationManager:
                 strategy=selected_strategy.strategy_name,
                 state=current_conv_state,
                 delta=state_delta,
+                contribution_plan=contribution_plan,
+                recent_replies=recent_character_replies,
+                target_handle=sender_handle,
             )
 
             if not critic_res.passes:
                 logger.warning(
                     "response.critic_flagged_issues",
                     issues=critic_res.detected_issues,
+                    constraints=critic_res.repair_constraints,
                     score=critic_res.score,
                     candidate=candidate_reply,
                 )
 
-                # SINGLE REGENERATION ATTEMPT before falling back to suggested_repair
+                # SINGLE REGENERATION ATTEMPT with strict repair constraints
+                constraints_lines = "\n".join(f"- {c}" for c in critic_res.repair_constraints)
                 repair_prompt = (
-                    f"[REPAIR DIRECTIVE]\n"
-                    f"Your previous reply was flagged. Issues: {', '.join(critic_res.detected_issues)}.\n"
-                    f"Regenerate a new reply that avoids all these issues while following the planned action.\n"
-                    f"Original message: {clean_text}\n\n"
+                    f"[CRITICAL REPAIR DIRECTIVES]\n"
+                    f"Your previous response was rejected for the following issues:\n"
+                    + "\n".join(f"- {issue}" for issue in critic_res.detected_issues) + "\n\n"
+                    f"Mandatory Constraints for Regeneration:\n"
+                    f"{constraints_lines}\n\n"
+                    f"Regenerate a clean, natural response following these constraints strictly.\n"
+                    f"Original user message: {clean_text}\n\n"
                 ) + user_prompt
 
                 try:
-                    logger.info("response.critic_retry_started")
+                    logger.info("response.critic_retry_started", constraints=critic_res.repair_constraints)
                     retry_response = await self.llm_provider.generate(
                         prompt=repair_prompt,
                         system_instruction=system_instruction,
@@ -520,7 +549,7 @@ class ConversationManager:
                     retry_structured = retry_response.structured_data or {}
                     retry_reply = retry_structured.get("reply_text", "")
                     retry_bubbles = retry_structured.get("bubbles", [])
-                    if retry_bubbles and isinstance(retry_bubbles, list):
+                    if retry_bubbles and isinstance(retry_bubbles, list) and len(retry_bubbles) > 0:
                         retry_reply = " \n ".join(b.strip() for b in retry_bubbles if b.strip())
 
                     retry_critic = ResponseQualityCritic.evaluate(
@@ -530,18 +559,22 @@ class ConversationManager:
                         strategy=selected_strategy.strategy_name,
                         state=current_conv_state,
                         delta=state_delta,
+                        contribution_plan=contribution_plan,
+                        recent_replies=recent_character_replies,
+                        target_handle=sender_handle,
                     )
 
                     if retry_reply and (retry_critic.passes or retry_critic.score > critic_res.score):
                         candidate_reply = retry_reply
                         logger.info("response.critic_retry_accepted", score=retry_critic.score)
-                    elif critic_res.suggested_repair:
-                        logger.info("response.critic_applied_repair", repair=critic_res.suggested_repair)
-                        candidate_reply = critic_res.suggested_repair
+                    elif contribution_plan.contribution_type.value in ("closer_ack", "dismissal_ack", "reaction_ack", "acknowledgment"):
+                        candidate_reply = "haan"
+                    else:
+                        candidate_reply = retry_reply or candidate_reply
                 except Exception as retry_err:
                     logger.warning("response.critic_retry_failed", error=str(retry_err))
-                    if critic_res.suggested_repair:
-                        candidate_reply = critic_res.suggested_repair
+                    if contribution_plan.contribution_type.value in ("closer_ack", "dismissal_ack", "reaction_ack", "acknowledgment"):
+                        candidate_reply = "haan"
 
             if intent == "SILENCE" or not candidate_reply:
                 logger.info("conversation.character_chose_silence")
@@ -632,7 +665,7 @@ class ConversationManager:
         simulated_time: datetime | None = None,
     ) -> str | None:
         """Proactively initiate a conversation turn with a target user."""
-        now = simulated_time or datetime.now(timezone.utc)
+        now = to_ist(simulated_time)
 
         # 1. Availability check unless force_available
         avail_state, current_activity = self.routine_mgr.resolve_availability(now)
@@ -693,6 +726,12 @@ class ConversationManager:
             or f"Initiate a casual, chill DM to {target_handle}. Ask what they are up to, or mention something relatable (movies, music, weekend plans, memes). Do NOT talk about homework, exams, or syllabus unless asked."
         )
 
+        life_state = self.routine_mgr.build_life_state(
+            now=now,
+            pending_homework=self.life_mgr.academic_repo.get_pending_homework(),
+            mood=mood,
+        )
+
         system_instruction = PromptBuilder.build_system_instruction(self.profile)
         user_prompt = PromptBuilder.build_prompt(
             current_message="",
@@ -707,6 +746,7 @@ class ConversationManager:
             emotional_state_notes=emotional_state_notes,
             academic_notes=(),
             outreach_directive=default_outreach,
+            life_state=life_state,
         )
 
         # 4. LLM Generation

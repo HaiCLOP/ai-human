@@ -139,6 +139,23 @@ class SocialIntentAnalyzer:
 
     CLARIFICATION_PATTERNS = [
         r"\b(kya matlab|samjha nahi|samjhi nahi|what do you mean|huh\?+|meaning\?)\b",
+        r"\b(kya bol rah[ie]|kya bak rah[ie]|kuch bhi|kya bolti|kya bolte|heh|aein|hain\??)\b",
+    ]
+
+    TOPIC_DISMISSAL_PATTERNS = [
+        r"\b(chhoro+|chhodo+|chhod na|chhor na|rehne de|rehne do|rehn de|drop it|forget it|leave it|bhul jao|chup kar|hatao|chodo|chhor do|chhod do|choro)\b",
+    ]
+
+    RHETORICAL_CHALLENGE_PATTERNS = [
+        r"^(toh\?*|to\?*|so\?*|so what\?*|toh kya\?*)$",
+    ]
+
+    SHORT_REACTION_PATTERNS = [
+        r"^(mast\s+hai|sahi\s+hai|bekar\s+hai|bahut\s+sahi|so\s+cool|too\s+good|superb\s+yaar)\b",
+    ]
+
+    ACTIVITY_QUERY_PATTERNS = [
+        r"\b(wyd|kya kar rah[ie]|aur bata kya kar rah[ie]|kya chal raha)\b",
     ]
 
     # --- New contextual act patterns ---
@@ -218,6 +235,76 @@ class SocialIntentAnalyzer:
             )
 
         words = lower.split()
+
+        # Explicit topic dismissal check ("chhoro", "bhul jao", "rehne de", "drop it")
+        if any(re.search(p, lower) for p in cls.TOPIC_DISMISSAL_PATTERNS):
+            signals.append("topic_dismissal_pattern")
+            return SocialIntent(
+                social_act="topic_dismissal",
+                confidence=0.95,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.3,
+                expected_reply_length="very_short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # Rhetorical challenge check ("toh?", "so?", "so what?")
+        if any(re.search(p, lower) for p in cls.RHETORICAL_CHALLENGE_PATTERNS):
+            signals.append("rhetorical_challenge_pattern")
+            return SocialIntent(
+                social_act="rhetorical_challenge",
+                confidence=0.9,
+                seriousness=0.2,
+                hostility=0.0,
+                playfulness=0.4,
+                expected_reply_length="very_short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # Clarification / Confusion check ("kya bol rahi ho", "heh", "kuch bhi", "samjha nahi")
+        if any(re.search(p, lower) for p in cls.CLARIFICATION_PATTERNS):
+            signals.append("clarification_pattern")
+            return SocialIntent(
+                social_act="clarification",
+                confidence=0.9,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.4,
+                expected_reply_length="very_short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # Short reaction check ("mast hai", "sahi hai", "nice")
+        if len(words) <= 3 and any(re.search(p, lower) for p in cls.SHORT_REACTION_PATTERNS):
+            signals.append("short_reaction_pattern")
+            return SocialIntent(
+                social_act="reaction_short",
+                confidence=0.9,
+                seriousness=0.2,
+                hostility=0.0,
+                playfulness=0.5,
+                expected_reply_length="very_short",
+                requires_response=False,
+                detected_signals=signals,
+            )
+
+        # Activity query check ("wyd", "kya kar rahi ho", "kaha ho")
+        if any(re.search(p, lower) for p in cls.ACTIVITY_QUERY_PATTERNS):
+            signals.append("activity_query_pattern")
+            return SocialIntent(
+                social_act="question_personal",
+                confidence=0.9,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.5,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
 
         # Standalone short acknowledgment check (ok, hmm, acha, mast, badhiya)
         if len(words) <= 2 and any(re.search(p, lower) for p in cls.ACKNOWLEDGMENT_PATTERNS):

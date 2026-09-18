@@ -9,8 +9,10 @@ from app.core.logging import get_logger
 from app.routine.models import (
     AvailabilityState,
     DepartureDecision,
+    MoodVector,
     RoutineActivity,
     UpcomingCommitment,
+    VesperLifeState,
 )
 from app.storage.database import DatabaseManager, get_db_manager
 from app.storage.repositories import (
@@ -20,6 +22,23 @@ from app.storage.repositories import (
 )
 
 logger = get_logger("routine.manager")
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def to_ist(dt: datetime | None = None) -> datetime:
+    """Convert datetime to Indian Standard Time (Asia/Kolkata, UTC+5:30).
+
+    When dt is None, returns current real-time in IST.
+    When dt is provided (e.g. simulated time or test datetime), preserves
+    its clock time for schedule resolution.
+    """
+    if dt is None:
+        return datetime.now(IST)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=IST)
+    return dt
 
 
 def _parse_hh_mm(time_str: str) -> dt_time:
@@ -69,13 +88,17 @@ class RoutineManager:
         character_id: str = "default",
     ) -> tuple[AvailabilityState, RoutineActivity]:
         """Deterministically compute current availability state and active commitment."""
-        now = current_dt or datetime.now(timezone.utc)
+        now = to_ist(current_dt)
         avail_record = self.avail_repo.get_or_create(character_id)
 
         # 1. Enforce active away_until override if not yet expired
         if avail_record.away_until:
             try:
                 away_dt = datetime.fromisoformat(avail_record.away_until.replace("Z", "+00:00"))
+                if away_dt.tzinfo is None:
+                    away_dt = away_dt.replace(tzinfo=IST)
+                else:
+                    away_dt = away_dt.astimezone(IST)
                 if now < away_dt:
                     state = AvailabilityState(avail_record.current_state)
                     activity = RoutineActivity(
@@ -109,14 +132,16 @@ class RoutineManager:
         for s in slots:
             start_t = _parse_hh_mm(s.start_time)
             end_t = _parse_hh_mm(s.end_time)
-            if end_t == dt_time(23, 59):
-                is_match = (start_t <= now_time <= end_t)
-            else:
-                is_match = (start_t <= now_time < end_t)
 
-            if is_match:
-                matched_slot = s
-                break
+            if start_t <= end_t:
+                if start_t <= now_time < end_t:
+                    matched_slot = s
+                    break
+            else:
+                # Slot crosses midnight (e.g. sleep 23:00 -> 07:00)
+                if now_time >= start_t or now_time < end_t:
+                    matched_slot = s
+                    break
 
         if matched_slot:
             state = AvailabilityState(matched_slot.default_availability)
@@ -129,14 +154,15 @@ class RoutineManager:
             )
             return state, activity
 
-        # Default fallback
-        return AvailabilityState.AVAILABLE, RoutineActivity(
+        # Fallback default: available free time at home
+        fallback_activity = RoutineActivity(
             activity="free_time",
             start="00:00",
             end="23:59",
             location="home",
             availability=AvailabilityState.AVAILABLE,
         )
+        return AvailabilityState.AVAILABLE, fallback_activity
 
     def check_upcoming_commitment(
         self,
@@ -144,7 +170,7 @@ class RoutineManager:
         character_id: str = "default",
     ) -> UpcomingCommitment | None:
         """Check if an unavailable commitment is approaching within the warning window."""
-        now = current_dt or datetime.now(timezone.utc)
+        now = to_ist(current_dt)
         day_name = now.strftime("%A").lower()
         now_time = now.time()
         slots = self.routine_repo.get_slots_for_day(day_name)
@@ -182,7 +208,7 @@ class RoutineManager:
         character_id: str = "default",
     ) -> DepartureDecision | None:
         """Check if an unavailable commitment has arrived, requiring departure from conversation."""
-        now = current_dt or datetime.now(timezone.utc)
+        now = to_ist(current_dt)
         state, activity = self.resolve_availability(now, character_id=character_id)
 
         # If already marked away in database, no need to trigger departure again
@@ -194,7 +220,7 @@ class RoutineManager:
         if state != AvailabilityState.AVAILABLE:
             end_t = _parse_hh_mm(activity.end) if activity.end else dt_time(23, 59)
             # Construct away_until datetime today
-            away_until_dt = datetime.combine(now.date(), end_t, tzinfo=timezone.utc)
+            away_until_dt = datetime.combine(now.date(), end_t, tzinfo=now.tzinfo)
             if away_until_dt <= now:
                 away_until_dt += timedelta(days=1)
 
@@ -246,4 +272,87 @@ class RoutineManager:
             current_location=rec.current_location,
             away_until=rec.away_until,
             warning_sent_for_activity=template_id,
+        )
+
+    def build_life_state(
+        self,
+        current_dt: datetime | None = None,
+        now: datetime | None = None,
+        character_id: str = "default",
+        pending_homework: list[Any] | None = None,
+        upcoming_exams: list[Any] | None = None,
+        mood: MoodVector | None = None,
+        **kwargs: Any,
+    ) -> VesperLifeState:
+        """Construct authoritative VesperLifeState for the current conversational moment."""
+        target_dt = current_dt or now or kwargs.get("simulated_time")
+        now_dt = to_ist(target_dt)
+        state, activity = self.resolve_availability(now_dt, character_id=character_id)
+
+        now = now_dt
+        # Find next event
+        day_name = now.strftime("%A").lower()
+        now_time = now.time()
+        slots = self.routine_repo.get_slots_for_day(day_name)
+        next_event = "rest / sleep"
+        for s in slots:
+            start_t = _parse_hh_mm(s.start_time)
+            if start_t > now_time:
+                next_event = f"{s.activity} at {s.start_time}"
+                break
+
+        # Determine specific task and thought
+        hw_desc = pending_homework[0].description if pending_homework else ""
+        act_name = activity.activity.lower()
+
+        if "school" in act_name:
+            task = "school periods and classes"
+            thought = "waiting for the final bell"
+        elif "tuition" in act_name:
+            task = "maths coaching with Sharma Sir"
+            thought = "trying to understand quadratic steps"
+        elif "homework" in act_name or "study" in act_name:
+            task = hw_desc or "physics numerical problems on friction"
+            thought = "physics question 7 incline plane calculation"
+        elif "snack" in act_name or "rest" in act_name:
+            task = "eating evening snack and relaxing at home"
+            thought = "thinking about what to listen to on Spotify"
+        elif "dinner" in act_name:
+            task = "having dinner with family"
+            thought = "listening to mom talking about board exams"
+        elif "sleep" in act_name:
+            task = "trying to fall asleep"
+            thought = "half asleep in bed"
+        else:
+            task = "relaxing on phone"
+            thought = "scrolling Instagram reels"
+
+        energy = mood.energy if mood else 0.6
+        stress = mood.stress if mood else 0.3
+
+        if energy < 0.4:
+            mood_label = "tired / drained"
+        elif stress > 0.6:
+            mood_label = "stressed about studies"
+        elif mood and mood.irritation > 0.4:
+            mood_label = "a bit annoyed"
+        elif energy > 0.7:
+            mood_label = "chill and energized"
+        else:
+            mood_label = "casual / chill"
+
+        is_free = (
+            state == AvailabilityState.AVAILABLE
+            and act_name in ("free_time", "free_time_casual", "rest", "rest_and_snacks")
+        )
+
+        return VesperLifeState(
+            activity=activity.activity,
+            location=activity.location,
+            current_task=task,
+            energy=energy,
+            mood_label=mood_label,
+            free_time=is_free,
+            next_event=next_event,
+            unfinished_thought=thought,
         )

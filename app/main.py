@@ -89,10 +89,10 @@ async def run_dry_run_console(force_available: bool = False) -> None:
             if reply:
                 print(f"{profile.identity.name}: {reply}\n")
             else:
-                from datetime import datetime, timezone
-                avail_state, current_activity = conv_mgr.routine_mgr.resolve_availability(datetime.now(timezone.utc))
+                from app.routine.manager import to_ist
+                avail_state, current_activity = conv_mgr.routine_mgr.resolve_availability(to_ist())
                 if not force_available and avail_state.value != "AVAILABLE":
-                    print(f"[{profile.identity.name} is currently away ({current_activity.activity}, until {current_activity.end} UTC). Message queued. Run with --force-available to chat anytime.]\n")
+                    print(f"[{profile.identity.name} is currently away ({current_activity.activity}, until {current_activity.end} IST). Message queued. Run with --force-available to chat anytime.]\n")
                 else:
                     print(f"[{profile.identity.name} chose silence or output was suppressed]\n")
 
@@ -105,6 +105,7 @@ async def run_agent(
     custom_message: str | None = None,
     force_available: bool = False,
     once: bool = False,
+    outreach: bool = False,
 ) -> int:
     """Main autonomous browser monitoring loop with proactive outreach support."""
     settings = get_settings()
@@ -163,16 +164,17 @@ async def run_agent(
             return 2
 
         if clean_target:
-            logger.info("main.initiating_outreach", target=clean_target)
+            allow_proactive = bool(custom_message or outreach or once)
             sent_text = await agent.text_user(
                 page=page,
                 username=clean_target,
                 custom_message=custom_message,
                 force_available=force_available,
+                allow_proactive=allow_proactive,
             )
             if sent_text:
                 print(f"\n[Sent DM to @{clean_target}]: {sent_text}\n")
-            else:
+            elif allow_proactive:
                 print(f"\n[Unable to send message to @{clean_target}. Check character availability or logs.]\n")
 
             if once:

@@ -29,6 +29,24 @@ T = TypeVar("T", bound=BaseModel)
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
+def _normalize_schema_for_groq(schema: dict[str, Any]) -> dict[str, Any]:
+    """Ensure schema complies with Groq / OpenAI strict json_schema requirements."""
+    res = dict(schema)
+    if "properties" in res:
+        res["additionalProperties"] = False
+        all_props = list(res["properties"].keys())
+        req = set(res.get("required", [])) | set(all_props)
+        res["required"] = sorted(list(req))
+        normalized_props = {}
+        for k, v in res["properties"].items():
+            if isinstance(v, dict):
+                normalized_props[k] = _normalize_schema_for_groq(v)
+            else:
+                normalized_props[k] = v
+        res["properties"] = normalized_props
+    return res
+
+
 class GroqProvider(LLMProvider):
     """Concrete provider for Groq Cloud API offering ultrafast inference and high free limits."""
 
@@ -127,7 +145,18 @@ class GroqProvider(LLMProvider):
         }
 
         if response_schema:
-            payload["response_format"] = {"type": "json_object"}
+            try:
+                strict_schema = _normalize_schema_for_groq(response_schema.model_json_schema())
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "character_response_plan",
+                        "schema": strict_schema,
+                        "strict": True,
+                    },
+                }
+            except Exception:
+                payload["response_format"] = {"type": "json_object"}
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -227,6 +256,10 @@ class GroqProvider(LLMProvider):
                     elif response.status_code >= 500:
                         last_error = LLMException(f"Groq server error {response.status_code}: {response.text}")
                         logger.warning("groq.server_error", status_code=response.status_code, error=response.text)
+                    elif response.status_code == 400 and payload.get("response_format", {}).get("type") == "json_schema":
+                        logger.warning("groq.json_schema_unsupported_fallback_to_json_object", model=model_name)
+                        payload["response_format"] = {"type": "json_object"}
+                        continue
                     else:
                         raise LLMException(f"Groq API error {response.status_code}: {response.text}")
 

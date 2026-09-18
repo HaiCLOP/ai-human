@@ -91,6 +91,35 @@ class ConversationState(BaseModel):
     recent_acts: list[str] = Field(default_factory=list)
     recent_vesper_strategies: list[str] = Field(default_factory=list)   # last 5 strategies
 
+    # Temporal consistency & ongoing activity tracking
+    pending_activities: list[PendingActivity] = Field(default_factory=list)
+
+    def is_subject_ongoing(self, subject_kw: str, current_dt: datetime | None = None) -> bool:
+        """Deterministically check if a subject/activity is currently ongoing or scheduled in the future."""
+        sub_lower = subject_kw.lower()
+        now_dt = current_dt or datetime.now(timezone.utc)
+        for act in self.pending_activities:
+            if act.subject.lower() in sub_lower or sub_lower in act.subject.lower() or sub_lower in ("movie", "film", "event", "activity"):
+                if act.status == "SCHEDULED":
+                    return True
+                if act.status == "ONGOING":
+                    if act.completion_hour is not None:
+                        now_h = (now_dt.hour + 5 + (1 if now_dt.minute + 30 >= 60 else 0)) % 24 if now_dt.tzinfo == timezone.utc else now_dt.hour
+                        now_m = (now_dt.minute + 30) % 60 if now_dt.tzinfo == timezone.utc else now_dt.minute
+                        if now_h < act.completion_hour or (now_h == act.completion_hour and now_m < (act.completion_minute or 0)):
+                            return True
+                    else:
+                        return True
+        return False
+
+
+class PendingActivity(BaseModel):
+    subject: str                    # "movie", "exam", "reading", "study", "general"
+    status: str = "ONGOING"         # "ONGOING", "SCHEDULED", "COMPLETED"
+    completion_time_str: str = ""   # e.g. "19:00", "tomorrow"
+    completion_hour: int | None = None
+    completion_minute: int | None = None
+
 
 def _extract_topic(text: str) -> str | None:
     """Topic extraction from the incoming message."""
@@ -185,14 +214,21 @@ _TOPIC_SHIFT_SIGNALS = {"waise", "btw", "ek aur", "by the way", "alag baat", "to
 
 def update_conversation_state(
     state: ConversationState,
-    intent: SocialIntent,
-    strategy: str,
+    intent: SocialIntent | None = None,
+    strategy: str = "",
     vesper_reply: str = "",
     current_user_text: str = "",
+    **kwargs: Any,
 ) -> ConversationState:
     """Update dynamic conversation state given incoming intent and chosen strategy."""
-    act = intent.social_act
-    incoming_text = current_user_text or getattr(intent, "_raw_text", "")
+    act_intent = intent or kwargs.get("social_intent")
+    if act_intent is None:
+        act_intent = SocialIntentAnalyzer.analyze(current_user_text)
+    act = act_intent.social_act
+    intent = act_intent
+    strategy_val = strategy or kwargs.get("strategy_name") or ""
+    strategy = strategy_val
+    incoming_text = current_user_text or getattr(act_intent, "_raw_text", "")
 
     # --- Recent acts ring buffer ---
     recent = list(state.recent_acts)
@@ -218,7 +254,11 @@ def update_conversation_state(
 
     topic_turn_age = state.topic_turn_age
 
-    if is_topic_shift and new_topic:
+    if act == "topic_dismissal":
+        topic_stack = []
+        current_topic = None
+        topic_turn_age = 0
+    elif is_topic_shift and new_topic:
         topic_stack = [new_topic]   # reset stack on explicit shift
         current_topic = new_topic
         topic_turn_age = 0
@@ -238,6 +278,39 @@ def update_conversation_state(
             topic_stack.clear()
         else:
             current_topic = topic_stack[-1] if topic_stack else state.current_topic
+
+    # --- Pending activities tracking ---
+    pending_acts = [act_item for act_item in state.pending_activities if act_item.status != "COMPLETED"]
+    time_match = re.search(r"\b(?:naa?|nahi|no)?\s*(\d{1,2})\s*baje\s*(?:hogi|hoga|khatam|over)?\b", lower_incoming)
+    if time_match:
+        hour = int(time_match.group(1))
+        hour_24 = hour + 12 if 1 <= hour <= 11 else hour
+        subj = current_topic or "movie"
+        pending_acts.append(
+            PendingActivity(
+                subject=subj,
+                status="ONGOING",
+                completion_time_str=f"{hour_24:02d}:00",
+                completion_hour=hour_24,
+                completion_minute=0,
+            )
+        )
+    elif re.search(r"\bkal\s+(?:exam|test|paper)\b", lower_incoming):
+        pending_acts.append(
+            PendingActivity(
+                subject="exam",
+                status="SCHEDULED",
+                completion_time_str="tomorrow",
+            )
+        )
+    elif re.search(r"\babhi\s+(?:dekh|padh|khel|chal)\s+rah[ai]\b", lower_incoming):
+        subj = current_topic or "activity"
+        pending_acts.append(
+            PendingActivity(
+                subject=subj,
+                status="ONGOING",
+            )
+        )
 
     # --- Recent subjects ring buffer ---
     recent_subjects = list(state.recent_subjects)
@@ -349,4 +422,5 @@ def update_conversation_state(
         last_response_strategy=strategy,
         recent_acts=recent,
         recent_vesper_strategies=recent_strategies,
+        pending_activities=pending_acts,
     )

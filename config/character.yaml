@@ -41,6 +41,9 @@ character:
     allowed_emojis:
       - "😭"
       - "😂"
+    forbidden_emojis:
+      - "💀"
+      - "🤗"
       - "🤤"
       - "😉"
       - "😊"
@@ -50,9 +53,6 @@ character:
       - "🤪"
       - "😇"
       - "👍"
-    forbidden_emojis:
-      - "💀"
-      - "🤗"
 
   behavior:
     prefer:

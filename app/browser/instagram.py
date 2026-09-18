@@ -744,6 +744,7 @@ class InstagramBrowserAgent:
         username: str,
         custom_message: str | None = None,
         force_available: bool = False,
+        allow_proactive: bool = True,
     ) -> str | None:
         """Open chat with username, craft or take message, and type/send it."""
         clean_handle = username if username.startswith("@") else f"@{username}"
@@ -771,6 +772,12 @@ class InstagramBrowserAgent:
                     print(f"\n[Replying to {clean_handle}]: {reply}\n")
                     await self.type_and_send(page, reply)
                     return reply
+                return None
+
+        # If no custom message provided and proactive outreach is not permitted, skip outreach
+        if not custom_message and not allow_proactive:
+            logger.info("browser.proactive_outreach_skipped_monitoring_only", user=clean_handle)
+            return None
 
         # 3. Otherwise prepare / generate proactive outreach message
         msg_to_send = custom_message

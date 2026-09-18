@@ -116,6 +116,25 @@ class ResponseValidator:
                     violated_rule="repetition",
                 )
 
+        # Content-word Jaccard overlap check against last 3 replies (threshold 0.50)
+        if len(text.split()) > 2 and recent_replies:
+            curr_words = set(re.findall(r"[a-zA-Z]{3,}", text.lower()))
+            if len(curr_words) >= 3:
+                for prev in recent_replies[-3:]:
+                    if not prev:
+                        continue
+                    prev_words = set(re.findall(r"[a-zA-Z]{3,}", prev.lower()))
+                    if len(prev_words) >= 3:
+                        jaccard = len(curr_words & prev_words) / len(curr_words | prev_words)
+                        if jaccard >= 0.50:
+                            logger.warning("validator.content_repetition_detected", jaccard=round(jaccard, 2))
+                            return ValidationResult(
+                                is_valid=False,
+                                sanitized_text="",
+                                rejection_reason=f"Content words overlap too heavily ({round(jaccard, 2)}) with recent reply: '{prev[:40]}...'",
+                                violated_rule="content_repetition",
+                            )
+
         # Strip surrounding quotes if the model wrapped its entire reply in quotation marks
         if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
             text = text[1:-1].strip()

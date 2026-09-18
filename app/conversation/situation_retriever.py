@@ -42,15 +42,18 @@ class SituationAwareRetriever:
         incoming_text: str,
         intent: SocialIntent,
         contact_id: str | None = None,
+        strategy_name: str | None = None,
+        allow_question: bool = False,
         limit: int = 3,
     ) -> list[dict[str, Any]]:
         """Retrieve top-scored historical turns matching the conversational situation."""
         target_act = intent.social_act
         incoming_tokens = _tokenize(incoming_text)
+        incoming_len = len(incoming_text.split())
 
         # 1. Fetch turns for this act
-        act_turns = self.repo.get_turns(contact_id=contact_id, social_act=target_act, limit=25)
-        global_act_turns = self.repo.get_turns(contact_id=None, social_act=target_act, limit=25)
+        act_turns = self.repo.get_turns(contact_id=contact_id, social_act=target_act, limit=30)
+        global_act_turns = self.repo.get_turns(contact_id=None, social_act=target_act, limit=30)
 
         # Merge unique turns by turn_id
         candidates: dict[str, dict[str, Any]] = {}
@@ -67,7 +70,7 @@ class SituationAwareRetriever:
         if not candidates:
             return []
 
-        # 2. Multi-signal scoring
+        # 2. Multi-signal scoring (10 signals from Section 11)
         scored_turns: list[tuple[float, dict[str, Any]]] = []
 
         for turn in candidates.values():
@@ -75,34 +78,51 @@ class SituationAwareRetriever:
             turn_contact_id = turn.get("contact_id")
             turn_length_cat = turn.get("response_length_category", "short")
             turn_contact_text = turn.get("contact_text", "")
+            turn_operator_text = turn.get("operator_text", "")
+            turn_strategy = turn.get("response_strategy", "direct_answer")
 
-            # M_act (0.30)
+            # 1. Social act match (0.25)
             m_act = 1.0 if turn_act == target_act else 0.0
 
-            # M_rel (0.25)
+            # 2. Relationship context match (0.15)
             m_rel = 1.0 if contact_id and turn_contact_id == contact_id else 0.5
 
-            # M_length (0.20)
+            # 3. Strategy match (0.15)
+            m_strat = 1.0 if strategy_name and turn_strategy.lower() == strategy_name.lower() else 0.5
+
+            # 4. Effort & length category match (0.15)
             m_length = 1.0 if turn_length_cat == intent.expected_reply_length else 0.5
 
-            # M_sem (0.15)
+            # 5. Question structure alignment (0.10)
+            has_q = "?" in turn_operator_text
+            m_q = 1.0 if (has_q == allow_question) else 0.3
+
+            # 6. Incoming message length proximity (0.05)
+            turn_inc_len = len(turn_contact_text.split())
+            len_diff = abs(incoming_len - turn_inc_len)
+            m_inc_len = max(0.0, 1.0 - (len_diff / 10.0))
+
+            # 7. Semantic / lexical similarity (0.10)
             turn_tokens = _tokenize(turn_contact_text)
             m_sem = _jaccard_similarity(incoming_tokens, turn_tokens)
 
-            # M_topic (0.10)
+            # 8. Topic keyword overlap (0.05)
             common_count = len(incoming_tokens & turn_tokens)
             m_topic = min(common_count / 3.0, 1.0)
 
-            # Strict guard: semantic overlap CANNOT override speech-act mismatch
+            # Composite score
             if m_act < 0.5 and target_act != "other":
                 score = (0.10 * m_rel + 0.10 * m_length + 0.10 * m_sem) * 0.5
             else:
                 score = (
-                    0.30 * m_act
-                    + 0.25 * m_rel
-                    + 0.20 * m_length
-                    + 0.15 * m_sem
-                    + 0.10 * m_topic
+                    0.25 * m_act
+                    + 0.15 * m_rel
+                    + 0.15 * m_strat
+                    + 0.15 * m_length
+                    + 0.10 * m_q
+                    + 0.05 * m_inc_len
+                    + 0.10 * m_sem
+                    + 0.05 * m_topic
                 )
 
             scored_turns.append((score, turn))
@@ -112,12 +132,17 @@ class SituationAwareRetriever:
 
         results: list[dict[str, Any]] = []
         for score, turn in scored_turns[:limit]:
+            op_text = turn.get("operator_text", "")
+            has_q = "?" in op_text
             results.append({
                 "turn_id": turn["turn_id"],
                 "contact_text": turn["contact_text"],
-                "operator_text": turn["operator_text"],
-                "social_act": turn["social_act"],
+                "operator_text": op_text,
+                "social_act": turn.get("social_act", "other"),
                 "response_strategy": turn.get("response_strategy", "direct_answer"),
+                "effort": turn.get("response_length_category", "short"),
+                "has_question": has_q,
+                "pattern": f"{turn.get('response_length_category', 'short')} response ({'with question' if has_q else 'no question'})",
                 "score": round(score, 3),
             })
 
@@ -128,3 +153,29 @@ class SituationAwareRetriever:
             top_score=results[0]["score"] if results else 0.0,
         )
         return results
+
+    @staticmethod
+    def format_for_prompt(examples: list[dict[str, Any]]) -> str:
+        """Format retrieved turns showing structure + example to prevent rote copying."""
+        if not examples:
+            return ""
+
+        lines = ["[HISTORICAL BEHAVIORAL EXAMPLES — Learn structure, do NOT copy exact words]"]
+        for idx, ex in enumerate(examples[:2], 1):
+            act = ex.get("social_act", "other")
+            strat = ex.get("response_strategy", "direct_reply")
+            effort = ex.get("effort", "short")
+            has_q = "true" if ex.get("has_question") else "false"
+            pattern = ex.get("pattern", "short direct response")
+            c_text = ex.get("contact_text", "")
+            o_text = ex.get("operator_text", "")
+
+            lines.append(f"Example {idx}:")
+            lines.append(f"  SOCIAL ACT: {act}")
+            lines.append(f"  STRATEGY: {strat}")
+            lines.append(f"  EFFORT: {effort}")
+            lines.append(f"  QUESTION: {has_q}")
+            lines.append(f"  PATTERN: {pattern}")
+            lines.append(f"  REAL CHAT: \"{c_text}\" → \"{o_text}\"")
+
+        return "\n".join(lines)

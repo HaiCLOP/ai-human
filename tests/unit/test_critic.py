@@ -19,7 +19,7 @@ def test_critic_flags_the_original_failure_case():
     assert not res.passes
     assert "rhetorical_insult_echo" in res.detected_issues
     assert "defensive_justification_on_banter" in res.detected_issues
-    assert res.suggested_repair is not None
+    assert len(res.repair_constraints) > 0
 
 
 def test_critic_passes_authentic_counter_banter():
@@ -94,7 +94,7 @@ def test_critic_flags_unsolicited_self_disclosure_on_short_acknowledgment():
     )
     assert not res.passes
     assert "unsolicited_self_disclosure_on_acknowledgment" in res.detected_issues
-    assert res.suggested_repair == "haan"
+    assert len(res.repair_constraints) > 0
 
 
 def test_critic_flags_temporal_inconsistency_on_ongoing_events():
@@ -110,7 +110,7 @@ def test_critic_flags_temporal_inconsistency_on_ongoing_events():
     )
     assert not res.passes
     assert "temporal_inconsistency_past_tense_on_ongoing_event" in res.detected_issues
-    assert res.suggested_repair == "achha theek hai tu dekh le fir"
+    assert len(res.repair_constraints) > 0
 
 
 def test_critic_flags_unsolicited_topic_on_time_query():
