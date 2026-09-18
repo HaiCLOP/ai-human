@@ -20,6 +20,11 @@ class MultiBubbleSplitter:
 
     # Sentence boundary regex
     SENTENCE_SPLIT_REGEX = re.compile(r"(?<=[.!?\n])\s+")
+    # Conversational clause transitions (e.g. shifting to "...tu bata kya chal raha hai")
+    CLAUSE_SPLIT_REGEX = re.compile(
+        r"(?<=\w)\s*[,]?\s*(?=(?:tu bata|tum batao|tu bol|tu suna|tu bata na|aur bata|aur tu|wbu|waise|kya scene|aur baki)\b)",
+        re.IGNORECASE,
+    )
     # Conjunction split regex for compound sentences
     CONJUNCTION_SPLIT_REGEX = re.compile(
         r"(?<=[\w])\s*,\s*(?=(?:lekin|par|waise|but|honestly|aur|plus|and)\b)",
@@ -32,29 +37,42 @@ class MultiBubbleSplitter:
         if not clean:
             return []
 
+        # Rule 0: Explicit newlines take absolute priority (e.g. LLM planned bubbles joined with \n)
+        if "\n" in clean:
+            lines = [p.strip() for p in clean.split("\n") if p.strip()]
+            if len(lines) > 1:
+                return lines[:3]
+
         words = clean.split()
 
         # Rule 1: Short text remains a single bubble
         if len(words) <= 7 or len(clean) <= 45:
             return [clean]
 
-        # Rule 2: Split on sentence boundaries
+        # Rule 2: Split on sentence boundaries (. ! ?)
         parts = [p.strip() for p in cls.SENTENCE_SPLIT_REGEX.split(clean) if p.strip()]
 
-        # Rule 3: If only 1 part was found, split on coordinating conjunctions
+        # Rule 3: Split on conversational clause shifts (e.g. "...tu bata kya chal raha hai")
+        if len(parts) == 1:
+            clause_parts = [p.strip() for p in cls.CLAUSE_SPLIT_REGEX.split(clean) if p.strip()]
+            if len(clause_parts) > 1:
+                parts = clause_parts
+
+        # Rule 4: If only 1 part was found, split on coordinating conjunctions with commas
         if len(parts) == 1:
             parts = [p.strip() for p in cls.CONJUNCTION_SPLIT_REGEX.split(clean) if p.strip()]
 
-        # Rule 4: If still only 1 part and message is long (> 12 words), split at a natural pause
-        if len(parts) == 1 and len(words) > 12:
-            mid = len(words) // 2
-            parts = [" ".join(words[:mid]), " ".join(words[mid:])]
+        # Rule 5: Split on comma if sentence is long (> 10 words)
+        if len(parts) == 1 and len(words) > 10 and "," in clean:
+            comma_parts = [p.strip() for p in clean.split(",", 1) if p.strip()]
+            if len(comma_parts) > 1:
+                parts = comma_parts
 
-        # Rule 5: Hard cap of 3 bubbles
+        # Rule 6: Hard cap of 3 bubbles
         if len(parts) > 3:
             parts = [parts[0], parts[1], " ".join(parts[2:])]
 
-        # Rule 6: Merge tiny orphan fragments (< 2 words or < 6 chars) into preceding bubble
+        # Rule 7: Merge tiny orphan fragments (< 2 words or < 6 chars) into preceding bubble
         refined: list[str] = []
         for p in parts:
             clean_p = re.sub(r"(?<!\.)\.(?!\.)\s*$", "", p).strip()

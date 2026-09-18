@@ -102,6 +102,11 @@ def test_multi_bubble_splitter():
     split_bubbles = MultiBubbleSplitter.split(long_text)
     assert len(split_bubbles) <= 3
 
+    # Conversational clause shift splits before "tu bata", not in the middle of predicate "normal hi rahe"
+    sentence = "theek hai na abhi bas normal hi rahe tu bata kya chal raha hai"
+    split_res = MultiBubbleSplitter.split(sentence)
+    assert split_res == ["theek hai na abhi bas normal hi rahe", "tu bata kya chal raha hai"]
+
 
 def test_calculate_bubble_cadence():
     bubbles = ["kuch nahi yaar", "bas assignments chal rahe 😭", "tu bata"]

@@ -84,7 +84,7 @@ def filter_emojis(text: str, allow_emoji: bool = True) -> str:
     if not text:
         return ""
     if not allow_emoji:
-        return re.sub(r"\s+", " ", EMOJI_REGEX.sub("", text)).strip()
+        return re.sub(r"[^\S\r\n]+", " ", EMOJI_REGEX.sub("", text)).strip()
 
     first_allowed_emoji: str | None = None
 
@@ -99,7 +99,7 @@ def filter_emojis(text: str, allow_emoji: bool = True) -> str:
         return ""  # strip all other emojis (including skull)
 
     sanitized = EMOJI_REGEX.sub(emoji_evaluator, text)
-    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    sanitized = re.sub(r"[^\S\r\n]+", " ", sanitized).strip()
     return sanitized
 
 
