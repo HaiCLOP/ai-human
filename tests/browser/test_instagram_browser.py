@@ -275,3 +275,49 @@ async def test_floating_modal_drawer_extraction(temp_db):
 
         await browser.close()
 
+
+MOCK_REEL_HTML = """
+<!DOCTYPE html>
+<html>
+<head><title>Direct</title></head>
+<body style="width: 1280px; height: 800px; margin: 0; padding: 0;">
+    <div role="main">
+        <div role="grid" aria-label="Messages">
+            <div role="row" style="position: absolute; left: 50px; top: 100px; width: 300px; height: 50px;">
+                <div dir="auto">Check this out</div>
+            </div>
+            <!-- Reel Card from User (left side) -->
+            <div role="row" style="position: absolute; left: 50px; top: 180px; width: 250px; height: 350px;">
+                <img src="avatar.jpg" style="width: 28px; height: 28px;" />
+                <a href="/reel/C123456789/" role="link">
+                    <video src="blob:reel.mp4"></video>
+                </a>
+            </div>
+        </div>
+    </div>
+    <div role="textbox" contenteditable="true" aria-label="Message" style="position: absolute; bottom: 20px; left: 50px; width: 800px; height: 40px;"></div>
+</body>
+</html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_mock_reel_message_extraction(temp_db):
+    profile = load_character_profile()
+    mock_llm = MockLLMProvider()
+    conv_mgr = ConversationManager(db=temp_db, llm_provider=mock_llm, character_profile=profile)
+    agent = InstagramBrowserAgent(conversation_manager=conv_mgr)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1280, "height": 800})
+        await page.set_content(MOCK_REEL_HTML)
+
+        messages = await agent.extract_visible_messages(page)
+        assert len(messages) == 2
+        assert messages[0].text == "Check this out"
+        assert messages[1].sender_type == "USER"
+        assert "[Shared a Reel]" in messages[1].text
+
+        await browser.close()
+

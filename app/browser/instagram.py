@@ -157,9 +157,9 @@ class InstagramBrowserAgent:
                     const tbRect = textbox.getBoundingClientRect();
 
                     // 2. Locate active chat drawer / dialog if present
+                    const parentEl = textbox.parentElement;
                     const dialog = textbox.closest("div[role='dialog']") 
-                                || textbox.closest("div[style*='position: fixed']")
-                                || textbox.closest("div[style*='position: absolute']");
+                                || (parentEl ? parentEl.closest("div[style*='position: fixed'], div[style*='position: absolute']") : null);
                     
                     let scrollContainer = null;
                     if (dialog) {
@@ -315,6 +315,82 @@ class InstagramBrowserAgent:
                         });
                     }
 
+                    // 3b. Query Reel and Media attachments (Instagram video previews, shared reels, clips)
+                    const mediaElements = Array.from(searchRoot.querySelectorAll(
+                        "a[href*='/reel/'], a[href*='/p/'], a[href*='/stories/'], video, svg[aria-label*='Clip' i], svg[aria-label*='Reels' i], svg[aria-label*='Play' i]"
+                    ));
+                    const processedMediaContainers = new Set();
+
+                    for (let mIdx = 0; mIdx < mediaElements.length; mIdx++) {
+                        const mEl = mediaElements[mIdx];
+                        if (textbox.contains(mEl)) continue;
+                        if (mEl.closest("header") || mEl.closest("div[role='banner']")) continue;
+
+                        const rowContainer = mEl.closest("div[role='row'], div[role='listitem']") || mEl;
+                        if (processedMediaContainers.has(rowContainer)) continue;
+                        processedMediaContainers.add(rowContainer);
+
+                        const mRect = (rowContainer !== mEl ? rowContainer : mEl).getBoundingClientRect();
+                        if (mRect.height === 0 || mRect.width === 0) continue;
+                        if (mRect.bottom > bottomBoundary || mRect.top < topBoundary) continue;
+                        if (mRect.right < leftBoundary || mRect.left > rightBoundary) continue;
+
+                        // Check if a message was already registered at this approximate vertical position (+/- 30px)
+                        let matched = false;
+                        for (const m of messages) {
+                            if (Math.abs(m.y - mRect.top) < 30) {
+                                matched = true;
+                                if (!m.text.includes("[Shared a Reel]")) {
+                                    m.text = "[Shared a Reel] " + m.text;
+                                }
+                                break;
+                            }
+                        }
+                        if (matched) continue;
+
+                        // Multi-signal sender classification for the media element
+                        let senderScore = 0;
+                        const row = mEl.closest("div[role='row'], div[role='listitem']") || mEl.parentElement.parentElement;
+                        if (row) {
+                            const avatar = row.querySelector("img, svg[aria-label]");
+                            if (avatar) {
+                                const avRect = avatar.getBoundingClientRect();
+                                if (avRect.left < mRect.left && avRect.width >= 14 && avRect.height >= 14) {
+                                    senderScore -= 10; // Incoming user message
+                                }
+                            }
+                        }
+
+                        // Physical horizontal position relative to chatCenter
+                        const bubbleCenter = mRect.left + (mRect.width / 2);
+                        if (bubbleCenter > chatCenter + 15) {
+                            senderScore += 6;
+                        } else if (bubbleCenter < chatCenter - 15) {
+                            senderScore -= 6;
+                        }
+
+                        // Row flex alignment
+                        let rowParent = mEl.parentElement;
+                        for (let d = 0; d < 3 && rowParent && rowParent !== document.body; d++) {
+                            const style = window.getComputedStyle(rowParent);
+                            if (style.justifyContent === 'flex-end' || style.alignSelf === 'flex-end') {
+                                senderScore += 3;
+                                break;
+                            } else if (style.justifyContent === 'flex-start' || style.alignSelf === 'flex-start') {
+                                senderScore -= 3;
+                                break;
+                            }
+                            rowParent = rowParent.parentElement;
+                        }
+
+                        messages.push({
+                            text: "[Shared a Reel]",
+                            is_right_aligned: senderScore > 0,
+                            y: mRect.top,
+                            element_index: 9000 + mIdx
+                        });
+                    }
+
                     messages.sort((a, b) => a.y - b.y);
                     return messages;
                 }
@@ -372,11 +448,17 @@ class InstagramBrowserAgent:
                         break
 
                 if not text_el:
-                    continue
-
-                raw_text = (await text_el.inner_text()).strip()
-                if not raw_text:
-                    continue
+                    reel_el = await row.query_selector(
+                        "a[href*='/reel/'], a[href*='/p/'], a[href*='/stories/'], video, svg[aria-label*='Clip' i], svg[aria-label*='Play' i]"
+                    )
+                    if reel_el:
+                        raw_text = "[Shared a Reel]"
+                    else:
+                        continue
+                else:
+                    raw_text = (await text_el.inner_text()).strip()
+                    if not raw_text:
+                        continue
 
                 box = await row.bounding_box()
                 is_right_aligned = False

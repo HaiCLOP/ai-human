@@ -262,6 +262,23 @@ class ActionPlanner:
                 brevity_target="short",
             )
 
+        # Sharing content / Reel share
+        if act == "sharing_content":
+            return PlannedAction(
+                action=Action.REACT,
+                confidence=0.90,
+                conversational_goal=(
+                    "User just sent or shared an Instagram Reel, video, or post with you. "
+                    "React enthusiastically and authentically like a Delhi teen girl on DMs! "
+                    "Examples: 'lmaooo 😭', 'bhai ye kya tha 😂', 'relatable af 😭', "
+                    "'kaha se dhoondte ho ye sab lol', 'nahhh fr 😭', 'ruk dekh rahi hu haha'. "
+                    "Acknowledge the reel directly with humor or teasing. NEVER ignore the fact that they sent a reel. "
+                    "Keep it 1 single, punchy bubble."
+                ),
+                allow_multi_bubble=False,
+                brevity_target="short",
+            )
+
         # Laughter / Funny reaction
         if act == "reaction_laugh":
             return PlannedAction(

@@ -133,3 +133,25 @@ def test_topic_saturation_cache():
     # Strip repetitive opener
     stripped = cache.strip_repetitive_opener("arre yaar kuch naya batao")
     assert not stripped.startswith("arre yaar")
+
+
+def test_enforce_feminine_inflections():
+    from app.ai.humanizer import enforce_feminine_inflections, humanize_text
+
+    # 1st-person masculine future verbs converted to feminine
+    assert enforce_feminine_inflections("bas thoda chill kar li ab thoda padh lunga") == "bas thoda chill kar li ab thoda padh lungi"
+    assert enforce_feminine_inflections("mai kal aaunga aur tujhe bataunga") == "mai kal aaungi aur tujhe bataungi"
+    assert enforce_feminine_inflections("dekhunga kya hota hai") == "dekhungi kya hota hai"
+    assert enforce_feminine_inflections("karunga mai") == "karungi mai"
+
+    # Continuous past and present
+    assert enforce_feminine_inflections("main so raha tha") == "main so rahi thi"
+    assert enforce_feminine_inflections("mai padh raha hu") == "mai padh rahi hu"
+
+    # 2nd person remains unchanged
+    assert enforce_feminine_inflections("tu kya kar raha hai") == "tu kya kar raha hai"
+    assert enforce_feminine_inflections("kya chal raha hai") == "kya chal raha hai"
+
+    # Integrated through humanize_text
+    output = humanize_text("Bas thoda chill kar li ab thoda padh lunga.")
+    assert output == "bas thoda chill kar li ab thoda padh lungi"

@@ -53,6 +53,39 @@ CONTRACTION_PATTERNS = [
     (re.compile(r"\b(I|you|they|we|he|she)'d\b", re.IGNORECASE), r"\1d"),
 ]
 
+# Masculine 1st-person verb inflections to rewrite to feminine
+MASCULINE_FUTURE_REGEX = re.compile(r"\b([a-zA-Z]+)(?:unga|oonga)\b", re.IGNORECASE)
+MASCULINE_ISOLATED_VERBS = [
+    (re.compile(r"\blunga\b", re.IGNORECASE), "lungi"),
+    (re.compile(r"\bloonga\b", re.IGNORECASE), "loongi"),
+    (re.compile(r"\bdunga\b", re.IGNORECASE), "dungi"),
+    (re.compile(r"\bdoonga\b", re.IGNORECASE), "doongi"),
+    (re.compile(r"\braha\s+(hu|hoon)\b", re.IGNORECASE), r"rahi \1"),
+    (re.compile(r"\b(main|mai)\s+([a-zA-Z\s]*?)raha\s+tha\b", re.IGNORECASE), r"\1 \2rahi thi"),
+    (re.compile(r"\b(main|mai)\s+gaya\s+tha\b", re.IGNORECASE), r"\1 gayi thi"),
+    (re.compile(r"\b(main|mai)\s+aaya\s+tha\b", re.IGNORECASE), r"\1 aayi thi"),
+    (re.compile(r"\b(film|movie|baat|class)\s+(khatam|over)\s+ho\s+gaya\b", re.IGNORECASE), r"\1 \2 ho gayi"),
+    (re.compile(r"\bacha\s+lagla\b", re.IGNORECASE), r"achha laga"),
+    (re.compile(r"\bachhi\s+lagli\b", re.IGNORECASE), r"achhi lagi"),
+]
+
+
+def enforce_feminine_inflections(text: str) -> str:
+    """Rewrite any accidental 1st-person masculine verb endings into authentic feminine forms."""
+    if not text:
+        return ""
+    def replace_unga(m: re.Match[str]) -> str:
+        full = m.group(0).lower()
+        stem = m.group(1)
+        if full.endswith("oonga"):
+            return stem + ("oongi" if m.group(0).islower() else "OONGI")
+        return stem + ("ungi" if m.group(0).islower() else "UNGI")
+
+    res = MASCULINE_FUTURE_REGEX.sub(replace_unga, text)
+    for pattern, repl in MASCULINE_ISOLATED_VERBS:
+        res = pattern.sub(repl, res)
+    return res
+
 
 def clean_rhetorical_qa(text: str) -> str:
     """Detect and rewrite theatrical 'Kyu? Kyunki...' or 'Why? Because...' patterns."""
@@ -166,7 +199,10 @@ def humanize_text(
     # 4. Lowercase normalizer
     step4 = normalize_lowercase(step3) if lowercase else step3
 
-    # 5. Strip trailing periods
-    step5 = strip_ending_punctuation(step4)
+    # 5. Enforce feminine 1st-person verb inflections (padh lunga -> padh lungi)
+    step5 = enforce_feminine_inflections(step4)
 
-    return step5
+    # 6. Strip trailing periods
+    step6 = strip_ending_punctuation(step5)
+
+    return step6
