@@ -101,6 +101,8 @@ class OpenRouterProvider(LLMProvider):
     ) -> LLMResponse:
         temp = temperature if temperature is not None else self.temperature
         tokens = max_tokens if max_tokens is not None else self.max_output_tokens
+        # Reasoning models (like Qwen 3.8 / Nemotron) consume tokens for internal thinking; ensure at least 800 tokens so JSON isn't truncated
+        effective_tokens = max(tokens, 800) if ("qwen" in model_name.lower() or "free" in model_name.lower()) else tokens
 
         messages: list[dict[str, str]] = []
         if system_instruction:
@@ -124,7 +126,7 @@ class OpenRouterProvider(LLMProvider):
             "model": model_name,
             "messages": messages,
             "temperature": temp,
-            "max_tokens": tokens,
+            "max_tokens": effective_tokens,
         }
 
         last_error: Exception | None = None
@@ -136,6 +138,18 @@ class OpenRouterProvider(LLMProvider):
                     logger.info("openrouter.generation_attempt", attempt=attempt, model=model_name)
                     response = await client.post(self.BASE_URL, headers=headers, json=payload)
                     latency_ms = (time.perf_counter() - start_time) * 1000
+
+                    # Auto-fallback from upstream-limited :free tier to standard slug
+                    if response.status_code in (404, 429) and ":free" in payload.get("model", ""):
+                        fallback_slug = payload["model"].replace(":free", "")
+                        logger.warning(
+                            "openrouter.free_tier_unavailable_retrying_standard",
+                            status=response.status_code,
+                            original=payload["model"],
+                            fallback=fallback_slug,
+                        )
+                        payload["model"] = fallback_slug
+                        response = await client.post(self.BASE_URL, headers=headers, json=payload)
 
                     if response.status_code == 429:
                         wait = min(2.0 ** attempt, 8.0)
@@ -153,14 +167,9 @@ class OpenRouterProvider(LLMProvider):
                         await asyncio.sleep(wait)
                         continue
 
-                    if response.status_code == 404 and ":free" in payload.get("model", ""):
-                        fallback_slug = payload["model"].replace(":free", "")
-                        logger.warning("openrouter.free_slug_discontinued_retrying_standard", original=payload["model"], fallback=fallback_slug)
-                        payload["model"] = fallback_slug
-                        response = await client.post(self.BASE_URL, headers=headers, json=payload)
-
                     if response.status_code != 200:
                         raise LLMException(f"OpenRouter HTTP {response.status_code}: {response.text}")
+
 
                     data = response.json()
                     raw_text = data["choices"][0]["message"]["content"] or ""
