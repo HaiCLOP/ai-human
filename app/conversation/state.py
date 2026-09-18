@@ -51,29 +51,44 @@ class ConversationState(BaseModel):
     # Active social mode
     social_mode: str = "casual"  # "banter", "casual", "serious", "venting", "logistical", "low_energy"
 
-    # What Vesper is currently engaged in
-    current_topic: str | None = None          # e.g. "board exams", "that movie", "some meme"
-    active_joke: str | None = None            # if a joke thread is in progress
-    active_story: str | None = None           # if a story/anecdote is being told
+    # Topic tracking — hierarchical stack (most recent = last item)
+    topic_stack: list[str] = Field(default_factory=list)   # e.g. ["school", "exam", "physics stress"]
+    current_topic: str | None = None
+    previous_topic: str | None = None
 
-    # What's pending/unresolved
-    unanswered_question: str | None = None    # a question the contact asked that hasn't been answered yet
+    # What Vesper is currently engaged in
+    active_joke: str | None = None           # if a joke thread is in progress
+    active_story: str | None = None          # if a story/anecdote is being told
+
+    # Question lifecycle tracking
+    unanswered_question: str | None = None   # question user asked that hasn't been answered
+    questions_asked_by_vesper: list[str] = Field(default_factory=list)   # rolling last 5
+    questions_answered_by_user: dict[str, str] = Field(default_factory=dict)  # {normalized_q: answer}
+    question_streak: int = 0                 # consecutive turns Vesper asked ≥1 question
+    in_interview_mode: bool = False          # True when question_streak >= 3
+
+    # Explicit message tracking (required by contextual resolver)
+    last_vesper_message: str = ""            # Vesper's last sent reply
+    last_user_message: str = ""             # User's last message (before current)
 
     # Recent history metadata
     last_user_intent: str = "other"
-    last_user_emotion: str | None = None      # e.g. "amused", "frustrated", "bored"
+    last_user_emotion: str | None = None    # e.g. "amused", "frustrated", "bored"
     recent_subjects: list[str] = Field(default_factory=list)  # last ~5 subjects/topics mentioned
-    last_response: str = ""                   # Vesper's last reply text (for continuity checks)
 
     # Conversational rhythm tracking
     consecutive_turns: int = 0
-    consecutive_short_replies: int = 0        # how many back-to-back ≤3-word replies have been made
-    energy_level: float = 0.5                 # internal energy tracker for pacing
+    consecutive_short_replies: int = 0      # how many back-to-back ≤3-word Vesper replies
+    energy_level: float = 0.5
 
-    # Strategy tracking
+    # Conversational effort level
+    current_effort_level: str = "NORMAL"   # MINIMAL | LOW | NORMAL | HIGH
+
+    # Strategy tracking (anti-repetition)
     last_social_act: str = "other"
     last_response_strategy: str = "direct_answer"
     recent_acts: list[str] = Field(default_factory=list)
+    recent_vesper_strategies: list[str] = Field(default_factory=list)   # last 5 strategies
 
 
 def _extract_topic(text: str) -> str | None:
@@ -117,31 +132,137 @@ def _infer_user_emotion(intent: SocialIntent) -> str | None:
     return None
 
 
+def _normalize_question(text: str) -> str:
+    """Normalize a question string for registry lookup."""
+    return re.sub(r"[^\w\s]", "", text.lower().strip())[:60]
+
+
+def _vesper_asked_question(reply: str) -> str | None:
+    """Extract question from Vesper's reply if one exists."""
+    if "?" in reply:
+        # Find the question clause
+        sentences = re.split(r"[.!]", reply)
+        for s in sentences:
+            if "?" in s and s.strip():
+                return s.strip()[:80]
+    return None
+
+
+def _user_answers_question(user_text: str, question: str) -> bool:
+    """Heuristic: does the user message look like an answer to a yes/no or simple question?"""
+    lower = user_text.lower().strip()
+    if len(lower.split()) <= 6:
+        affirmatives = {"haan", "ha", "yes", "yep", "yeah", "ok", "hm", "hmm", "theek", "bilkul", "sahi"}
+        negatives = {"nahi", "nope", "no", "na", "nah", "mat"}
+        return any(w in lower for w in affirmatives | negatives)
+    return True  # longer response almost certainly is an answer
+
+
+def _compute_effort(user_text: str, intent_act: str) -> str:
+    """Determine conversational effort level based on user message."""
+    words = len(user_text.split())
+    if words <= 2:
+        return "MINIMAL"
+    if words <= 6:
+        return "LOW"
+    if intent_act in ("venting",) or words > 20:
+        return "HIGH"
+    return "NORMAL"
+
+
+_TOPIC_SHIFT_SIGNALS = {"waise", "btw", "ek aur", "by the way", "alag baat", "topic change", "suno ek baat"}
+
+
 def update_conversation_state(
     state: ConversationState,
     intent: SocialIntent,
     strategy: str,
     vesper_reply: str = "",
+    current_user_text: str = "",
 ) -> ConversationState:
     """Update dynamic conversation state given incoming intent and chosen strategy."""
     act = intent.social_act
-    incoming_text = getattr(intent, "_raw_text", "")  # available if analyzer stores it
+    incoming_text = current_user_text or getattr(intent, "_raw_text", "")
 
+    # --- Recent acts ring buffer ---
     recent = list(state.recent_acts)
     recent.append(act)
     if len(recent) > 7:
         recent = recent[-7:]
 
-    # Recent subjects
+    # --- Strategy ring buffer ---
+    recent_strategies = list(state.recent_vesper_strategies)
+    if strategy:
+        recent_strategies.append(strategy)
+    if len(recent_strategies) > 5:
+        recent_strategies = recent_strategies[-5:]
+
+    # --- Topic stack management ---
+    topic_stack = list(state.topic_stack)
     new_topic = _extract_topic(incoming_text) if incoming_text else None
+    previous_topic = state.current_topic
+
+    # Check for explicit topic shift signal
+    lower_incoming = incoming_text.lower()
+    is_topic_shift = any(sig in lower_incoming for sig in _TOPIC_SHIFT_SIGNALS)
+
+    if is_topic_shift and new_topic:
+        topic_stack = [new_topic]   # reset stack on explicit shift
+    elif new_topic and new_topic != state.current_topic:
+        # Sub-topic push (e.g. school → exam → physics)
+        if new_topic not in topic_stack:
+            topic_stack.append(new_topic)
+        if len(topic_stack) > 5:
+            topic_stack = topic_stack[-5:]
+
+    current_topic = topic_stack[-1] if topic_stack else state.current_topic
+
+    # --- Recent subjects ring buffer ---
     recent_subjects = list(state.recent_subjects)
     if new_topic and (not recent_subjects or recent_subjects[-1] != new_topic):
         recent_subjects.append(new_topic)
     if len(recent_subjects) > 5:
         recent_subjects = recent_subjects[-5:]
 
-    # Resolve active social mode
-    if act in ("playful_insult", "teasing", "reaction_laugh", "humor_attempt"):
+    # --- Question registry ---
+    questions_asked = list(state.questions_asked_by_vesper)
+    questions_answered = dict(state.questions_answered_by_user)
+
+    # Did Vesper ask a question in her last reply?
+    vesper_question = _vesper_asked_question(state.last_vesper_message) if state.last_vesper_message else None
+
+    # Did the user answer Vesper's pending question?
+    if vesper_question and incoming_text:
+        norm_q = _normalize_question(vesper_question)
+        if norm_q not in questions_answered and _user_answers_question(incoming_text, vesper_question):
+            questions_answered[norm_q] = incoming_text[:100]
+
+    # Register the new Vesper question (if she asked one in THIS reply)
+    new_vesper_question = _vesper_asked_question(vesper_reply) if vesper_reply else None
+    if new_vesper_question:
+        norm_new_q = _normalize_question(new_vesper_question)
+        if norm_new_q not in questions_asked:
+            questions_asked.append(norm_new_q)
+        if len(questions_asked) > 5:
+            questions_asked = questions_asked[-5:]
+
+    # --- Question streak / interview mode ---
+    if new_vesper_question:
+        question_streak = state.question_streak + 1
+    else:
+        question_streak = 0
+    in_interview_mode = question_streak >= 3
+
+    # --- Unanswered question from USER ---
+    unanswered = state.unanswered_question
+    if vesper_reply:
+        unanswered = None   # Vesper replied → question addressed
+    incoming_stripped = incoming_text.strip()
+    if incoming_stripped.endswith("?") and not vesper_reply:
+        unanswered = incoming_stripped[:80]
+
+    # --- Social mode ---
+    if act in ("playful_insult", "teasing", "reaction_laugh", "humor_attempt", "counter_tease"):
         social_mode = "banter"
         energy = min(state.energy_level + 0.15, 0.9)
     elif act == "venting":
@@ -155,12 +276,12 @@ def update_conversation_state(
         energy = 0.5
     elif act in ("acknowledgment", "farewell"):
         social_mode = "low_energy"
-        energy = max(state.energy_level - 0.1, 0.2)
+        energy = max(state.energy_level - 0.05, 0.2)
     else:
-        social_mode = state.social_mode  # preserve current mode for continuity
+        social_mode = state.social_mode
         energy = state.energy_level
 
-    # Track consecutive short replies from Vesper
+    # --- Consecutive short replies ---
     vesper_word_count = len(vesper_reply.split()) if vesper_reply else 0
     consec_short = state.consecutive_short_replies
     if vesper_word_count <= 3 and vesper_reply:
@@ -168,39 +289,41 @@ def update_conversation_state(
     else:
         consec_short = 0
 
-    # Active joke persistence — clear if topic changed significantly
+    # --- Active joke persistence ---
     active_joke = state.active_joke
     if act in ("reaction_laugh",) and state.active_joke:
-        active_joke = state.active_joke  # keep it alive
+        active_joke = state.active_joke
     elif act in ("farewell", "question_logistical", "venting"):
-        active_joke = None  # topic shift clears active joke
+        active_joke = None
 
-    # Unanswered question — clear when Vesper replies
-    unanswered = state.unanswered_question
-    if vesper_reply:
-        unanswered = None  # reply was sent, question answered
-
-    # If user asked a question, register it as unanswered (simple heuristic: ends with ?)
-    incoming_stripped = incoming_text.strip() if incoming_text else ""
-    if incoming_stripped.endswith("?") and not vesper_reply:
-        unanswered = incoming_stripped[:80]  # store truncated version
+    # --- Effort level ---
+    effort = _compute_effort(incoming_text, act)
 
     return ConversationState(
         conversation_id=state.conversation_id,
         contact_id=state.contact_id,
         social_mode=social_mode,
-        current_topic=new_topic or state.current_topic,
+        topic_stack=topic_stack,
+        current_topic=current_topic,
+        previous_topic=previous_topic,
         active_joke=active_joke,
         active_story=state.active_story,
         unanswered_question=unanswered,
+        questions_asked_by_vesper=questions_asked,
+        questions_answered_by_user=questions_answered,
+        question_streak=question_streak,
+        in_interview_mode=in_interview_mode,
+        last_vesper_message=vesper_reply or state.last_vesper_message,
+        last_user_message=incoming_text or state.last_user_message,
         last_user_intent=act,
         last_user_emotion=_infer_user_emotion(intent),
         recent_subjects=recent_subjects,
-        last_response=vesper_reply,
         consecutive_turns=state.consecutive_turns + 1,
         consecutive_short_replies=consec_short,
         energy_level=round(energy, 2),
+        current_effort_level=effort,
         last_social_act=act,
         last_response_strategy=strategy,
         recent_acts=recent,
+        recent_vesper_strategies=recent_strategies,
     )

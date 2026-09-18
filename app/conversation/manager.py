@@ -14,6 +14,7 @@ from app.ai.validator import ResponseValidator, ValidationResult
 from app.conversation.action_planner import ActionPlanner
 from app.conversation.chemistry import ChemistryModel
 from app.conversation.critic import ResponseQualityCritic
+from app.conversation.response_intent import build_response_intent, format_now_block
 from app.conversation.response_strategy import ResponseStrategySelector
 from app.conversation.situation_retriever import SituationAwareRetriever
 from app.conversation.social_intent import SocialIntentAnalyzer
@@ -22,6 +23,7 @@ from app.conversation.state import (
     compute_message_fingerprint,
     update_conversation_state,
 )
+from app.conversation.state_delta import compute_state_delta
 from app.core.logging import bind_correlation_id, get_logger
 from app.humor.engine import HumorEngine
 from app.memory.manager import MemoryManager
@@ -272,13 +274,31 @@ class ConversationManager:
             # 8c. Social Intent & Response Strategy Analysis
             from app.learning.operator_detector import OperatorDetector
             contact_id = OperatorDetector.generate_contact_id(sender_handle)
-            social_intent = SocialIntentAnalyzer.analyze(clean_text)
+
+            # Build context_history for contextual resolution (last 6 messages)
+            context_history_for_intent = [
+                {"role": "vesper" if m.sender_type != "USER" else "user", "text": m.content}
+                for m in list(history)[-6:]
+            ]
+
+            social_intent = SocialIntentAnalyzer.analyze(
+                clean_text,
+                context_history=context_history_for_intent,
+                contact_id=contact_id,
+            )
             # Attach raw text for state tracking
             social_intent._raw_text = clean_text  # type: ignore[attr-defined]
 
             current_conv_state = self.conversation_states.get(
                 conversation_id,
                 ConversationState(conversation_id=conversation_id, contact_id=contact_id),
+            )
+
+            # Compute state delta — what just changed (used by ActionPlanner v2)
+            state_delta = compute_state_delta(
+                current_msg=clean_text,
+                intent=social_intent,
+                state=current_conv_state,
             )
 
             rel_style_dict = self.hist_repo.get_relationship_style(contact_id)
@@ -298,10 +318,11 @@ class ConversationManager:
                 intent=social_intent,
                 relationship_profile=rel_style_dict,
                 mood=mood,
+                state_delta=state_delta,
             )
             planned_action_str = (
                 f"Action: {planned_action_result.action.value}\n"
-                f"Hint: {planned_action_result.tactical_hint}\n"
+                f"Hint: {planned_action_result.conversational_goal}\n"
                 f"Brevity: {planned_action_result.brevity_target}\n"
                 f"Multi-bubble allowed: {'yes' if planned_action_result.allow_multi_bubble else 'no'}"
             )
@@ -311,7 +332,9 @@ class ConversationManager:
                 action=planned_action_result.action.value,
                 confidence=planned_action_result.confidence,
                 social_act=social_intent.social_act,
+                state_delta=state_delta.what_changed[:60] if state_delta else None,
             )
+
 
             # Retrieve situationally relevant historical examples
             historical_turn_examples = self.situation_retriever.retrieve_examples(
@@ -357,36 +380,43 @@ class ConversationManager:
                 conv_state_notes.append(f"Pending unanswered question: {current_conv_state.unanswered_question}")
             if current_conv_state.consecutive_short_replies >= 2:
                 conv_state_notes.append(f"You've given {current_conv_state.consecutive_short_replies} consecutive very short replies — vary your response if natural.")
+            if current_conv_state.in_interview_mode:
+                conv_state_notes.append("INTERVIEW MODE: You've asked 3+ questions in a row. Do NOT ask any question this turn.")
+            if state_delta and state_delta.what_changed:
+                conv_state_notes.append(f"What changed: {state_delta.what_changed}")
+
+            # Build real-time date/time block (format_now_block handles IST conversion)
+            now_block_str = format_now_block(now)
 
             system_instruction = PromptBuilder.build_system_instruction(self.profile)
             user_prompt = PromptBuilder.build_prompt(
                 current_message=clean_text if not batched_texts else "",
                 user_handle=sender_handle,
                 conversation_history=history,
-                user_style_notes=style_notes,
-                chemistry_notes=chemistry_notes,
                 relevant_memories=relevant_memories,
                 rag_context=rag_chunks,
-                humor_directive=humor_decision.directive_text,
                 routine_context=routine_context,
                 upcoming_warning=upcoming_warning,
                 departure_directive=departure_directive,
                 emotional_state_notes=emotional_state_notes,
-                academic_notes=filtered_academic_notes,
                 batched_messages_while_away=batched_texts,
                 saturated_topics=saturated_topics,
-                saturated_openers=saturated_openers,
-                operator_style_notes=op_style_notes,
-                contact_style_notes=contact_style_notes,
                 relationship_notes=rel_notes,
-                historical_memories=hist_mem_notes,
-                social_intent_notes=social_intent_notes,
-                response_strategy_notes=response_strategy_notes,
                 historical_examples=historical_turn_examples,
-                behavioral_pattern_notes=behavioral_pattern_notes,
                 planned_action=planned_action_str,
                 conversation_state_notes=conv_state_notes,
+                now_block=now_block_str,
+                # Legacy pass-through (silently accepted)
+                user_style_notes=style_notes,
+                chemistry_notes=chemistry_notes,
+                operator_style_notes=op_style_notes,
+                contact_style_notes=contact_style_notes,
+                social_intent_notes=social_intent_notes,
+                response_strategy_notes=response_strategy_notes,
+                behavioral_pattern_notes=behavioral_pattern_notes,
+                historical_memories=hist_mem_notes,
             )
+
 
             # 9. LLM Generation
             logger.info("llm.request_started", provider=type(self.llm_provider).__name__)
@@ -508,6 +538,7 @@ class ConversationManager:
                 social_intent,
                 selected_strategy.strategy_name,
                 vesper_reply=approved_reply,
+                current_user_text=clean_text,
             )
 
             # 12. State Updates Post-Send

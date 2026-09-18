@@ -90,10 +90,12 @@ def test_human_style_structural_evaluation():
             operator_style_notes=operator_notes,
         )
 
-        # 1. Verify prompt contains learned style rules derived from the dataset
-        assert "OPERATOR ENVIRONMENT & COMMUNICATIVE BASELINE" in prompt
-        assert "Operator lowercase preference" in prompt
-        assert "Frequent slang words" in prompt
+        # 1. Verify prompt always contains the current message and output rules
+        # Note: operator_style_notes is now a legacy passthrough (not rendered as a
+        # dedicated section in the new context-first prompt)
+        assert "[CURRENT MESSAGE]" in prompt
+        assert "[OUTPUT RULES]" in prompt
+        assert inp in prompt
 
         # 2. Simulate model response plan conditioned on this input
         # Emulate authentic brief multi-bubble reply
@@ -145,19 +147,20 @@ def test_character_persona_independence_from_style():
 
     # Core persona markers must remain present in system instruction
     assert "Vesper" in sys_inst
-    # New structure uses [WHAT YOU ARE NOT] instead of CRITICAL IDENTITY BOUNDARIES
-    assert "WHAT YOU ARE NOT" in sys_inst
-    assert "FICTIONAL" in sys_inst  # now explicitly present as "FICTIONAL character"
-    assert "NOT an AI language model" in sys_inst
+    # New structure uses [WHO YOU ARE] and [OBSERVABLE BEHAVIOR] instead of old headers
+    assert "WHO YOU ARE" in sys_inst
+    assert "NOT an AI" in sys_inst
+    assert "fictional person" in sys_inst
 
-    # Build user prompt with learned operator style notes
+    # Build user prompt with learned operator style notes (now legacy passthrough)
     user_prompt = PromptBuilder.build_prompt(
         current_message="yo",
         user_handle="friend",
-        operator_style_notes=["Operator lowercase preference: 95%", "Operator Hinglish ratio: 25%"],
     )
-    assert "[OPERATOR ENVIRONMENT & COMMUNICATIVE BASELINE]" in user_prompt
-    assert "Operator lowercase preference: 95%" in user_prompt
+    # The new prompt always has CURRENT MESSAGE and OUTPUT RULES
+    assert "[CURRENT MESSAGE]" in user_prompt
+    assert "[OUTPUT RULES]" in user_prompt
+
 
 
 def test_privacy_and_security_audit():

@@ -14,6 +14,9 @@ logger = get_logger("routine.mood")
 # Per-conversation in-memory emotional state (resets on process restart — acceptable for now)
 _conversation_mood: dict[str, MoodVector] = {}
 
+# Track last activity per conversation to gate situational deltas (only apply on change)
+_last_activity: dict[str, str] = {}
+
 # Baseline mood Vesper returns to over time
 _BASELINE = MoodVector(
     valence=0.2,
@@ -30,8 +33,14 @@ _BASELINE = MoodVector(
     summary_note="Balanced, relatable everyday demeanor.",
 )
 
-# Decay rate per message turn — emotions move 10% toward baseline each turn
-_DECAY_RATE = 0.10
+# Decay rate per message turn — emotions move 2% toward baseline each turn (was 10% — too aggressive)
+_DECAY_RATE = 0.02
+
+# Hard floor for energy from conversation alone (sleep is unrestricted)
+_ENERGY_FLOOR = 0.15
+
+# Maximum change per single event (prevents wild swings)
+_MAX_EVENT_DELTA = 0.20
 
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -136,58 +145,71 @@ class MoodEngine:
         # 1. Retrieve and decay persisted conversation mood
         decayed = MoodEngine.decay_mood(conversation_id)
 
-        # 2. Compute situational deltas from life state
-        act_lower = current_activity.lower()
+        # 2. Only apply situational deltas when the activity actually changes
+        prev_activity = _last_activity.get(conversation_id, "")
+        activity_changed = current_activity != prev_activity
+        _last_activity[conversation_id] = current_activity
+
         energy_delta = 0.0
         stress_delta = 0.0
         arousal_delta = 0.0
         social_delta = 0.0
 
-        if availability == AvailabilityState.AT_SCHOOL or "school" in act_lower:
-            energy_delta = -0.15
-            stress_delta = 0.10
-            arousal_delta = 0.05
-            social_delta = -0.05
-        elif availability == AvailabilityState.AT_TUITION or "tuition" in act_lower:
-            energy_delta = -0.25
-            stress_delta = 0.20
-            arousal_delta = -0.10
-            social_delta = -0.10
-        elif availability == AvailabilityState.STUDYING or "homework" in act_lower or "study" in act_lower or "revision" in act_lower:
-            stress_delta = 0.15
-            energy_delta = -0.10
-            social_delta = -0.15
-        elif availability == AvailabilityState.SLEEPING:
-            energy_delta = -0.60
-            arousal_delta = -0.45
-            social_delta = -0.50
-        elif "rest" in act_lower or "chill" in act_lower or "leisure" in act_lower:
-            energy_delta = 0.10
-            stress_delta = -0.10
-            arousal_delta = 0.05
-            social_delta = 0.10
-        elif "friends" in act_lower or "outing" in act_lower:
-            arousal_delta = 0.15
-            social_delta = 0.20
-            energy_delta = 0.05
+        if activity_changed:
+            act_lower = current_activity.lower()
 
-        # 3. Academic pressure
+            if availability == AvailabilityState.AT_SCHOOL or "school" in act_lower:
+                energy_delta = -0.10
+                stress_delta = 0.08
+                arousal_delta = 0.03
+                social_delta = -0.03
+            elif availability == AvailabilityState.AT_TUITION or "tuition" in act_lower:
+                energy_delta = -0.15
+                stress_delta = 0.12
+                arousal_delta = -0.05
+                social_delta = -0.08
+            elif availability == AvailabilityState.STUDYING or any(
+                w in act_lower for w in ("homework", "study", "revision")
+            ):
+                stress_delta = 0.08
+                energy_delta = -0.06
+                social_delta = -0.10
+            elif availability == AvailabilityState.SLEEPING:
+                energy_delta = -0.50
+                arousal_delta = -0.40
+                social_delta = -0.40
+            elif any(w in act_lower for w in ("rest", "chill", "leisure")):
+                energy_delta = 0.08
+                stress_delta = -0.08
+                arousal_delta = 0.03
+                social_delta = 0.08
+            elif any(w in act_lower for w in ("friends", "outing")):
+                arousal_delta = 0.10
+                social_delta = 0.15
+                energy_delta = 0.03
+
+        # 3. Academic pressure (applied each time regardless of activity change — exams don't go away)
         exams = upcoming_exams or []
         hw = pending_homework or []
 
         if any(e.importance == "HIGH" for e in exams):
-            stress_delta += 0.25
-            energy_delta -= 0.05
+            stress_delta += 0.15
+            energy_delta -= 0.03
         elif exams:
-            stress_delta += 0.10
+            stress_delta += 0.05
 
         if any(h.priority == "HIGH" for h in hw):
-            stress_delta += 0.10
+            stress_delta += 0.05
 
-        # 4. Apply situational deltas onto decayed state
+        # 4. Apply situational deltas onto decayed state, with energy floor
+        raw_energy = _clamp(decayed.energy + energy_delta)
+        # Enforce energy floor (not applied during sleep)
+        if availability != AvailabilityState.SLEEPING:
+            raw_energy = max(raw_energy, _ENERGY_FLOOR)
+
         merged = replace(
             decayed,
-            energy=_clamp(decayed.energy + energy_delta),
+            energy=raw_energy,
             stress=_clamp(decayed.stress + stress_delta),
             arousal=_clamp(decayed.arousal + arousal_delta),
             social_energy=_clamp(decayed.social_energy + social_delta),

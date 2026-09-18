@@ -53,6 +53,21 @@ class ResponseQualityCritic:
         r"\b(nahi mai ameer nahi|mai to ordinary student|mai to bas ek|mai koi ameer nahi|aisa nahi hai mai ameer)\b",
     ]
 
+    # Expanded AI-tell patterns
+    EXTENDED_AI_TELL_PATTERNS = [
+        r"\b(basically|from my perspective|to be honest the|i think the reason is)\b",
+        r"\b(that makes sense|i understand what you mean|i can understand why)\b",
+        r"\b(great question|that's actually interesting|let me explain|as an ai)\b",
+        r"\b(maybe you should|perhaps you could|i recommend|i suggest)\b",
+    ]
+
+    # Follow-up probe patterns (user expecting Vesper to continue/explain)
+    FOLLOW_UP_PROBE_PATTERNS = [
+        r"^(kyuu+\??|kyu\??|why\?*|kyun\?*|kyu bata|why tho\?*)$",
+        r"^(phir\??|then\??|aur\??|kya hua fir\?*|then what\??|matlab\?*)$",
+        r"^(seriously\??|srsly\??|really\?*)$",
+    ]
+
     @classmethod
     def evaluate(
         cls,
@@ -60,7 +75,10 @@ class ResponseQualityCritic:
         incoming_text: str,
         intent: SocialIntent,
         strategy: str = "direct_answer",
+        state=None,   # ConversationState — optional, enables contextual checks
+        delta=None,   # StateDelta — optional
     ) -> CriticResult:
+
         """Evaluate candidate response for conversational quality and social fit."""
         reply_clean = candidate_reply.strip()
         reply_lower = reply_clean.lower()
@@ -115,6 +133,43 @@ class ResponseQualityCritic:
             issues.append("unnatural_ending_period")
             score -= 0.1
 
+        # 6. Extended AI-tells (softer penalty)
+        for p in cls.EXTENDED_AI_TELL_PATTERNS:
+            if re.search(p, reply_lower):
+                issues.append(f"extended_ai_tell:{p[:40]}")
+                score -= 0.25
+
+        # 7. Vague non-answer check — applies when user probed with why/follow-up
+        if state and delta:
+            if (
+                getattr(delta, "vesper_should_explain", False)
+                and reply_clean
+                and len(reply_clean.split()) <= 4
+            ):
+                # Vesper should have explained but gave a ≤4 word non-answer
+                issues.append("vague_non_answer_on_why_probe")
+                score -= 0.40
+
+        # 8. Repeated answered question — Vesper asked a question the user already answered
+        if state:
+            questions_answered = getattr(state, "questions_answered_by_user", {})
+            if questions_answered and "?" in reply_clean:
+                # Check if reply contains a question close to one already answered
+                for norm_q, answer in questions_answered.items():
+                    # Simple token overlap check
+                    norm_reply_words = set(re.sub(r"[^\w\s]", "", reply_lower).split())
+                    norm_q_words = set(norm_q.split())
+                    overlap = norm_reply_words & norm_q_words
+                    if len(overlap) >= 2:
+                        issues.append(f"repeated_answered_question:{norm_q[:40]}")
+                        score -= 0.35
+                        break
+
+        # 9. Interview mode — Vesper is in interview mode but still asks a question
+        if state and getattr(state, "in_interview_mode", False) and "?" in reply_clean:
+            issues.append("question_in_interview_mode")
+            score -= 0.35
+
         score = max(0.0, round(score, 2))
         has_critical_failure = (
             "forbidden_skull_emoji" in issues
@@ -122,6 +177,7 @@ class ResponseQualityCritic:
             or "defensive_justification_on_banter" in issues
             or any("effort_parity_overanswering" in iss for iss in issues)
             or any("ai_tell_pattern" in iss for iss in issues)
+            or "vague_non_answer_on_why_probe" in issues
         )
         passes = score >= 0.6 and not has_critical_failure
 
@@ -133,6 +189,8 @@ class ResponseQualityCritic:
             elif "forbidden_skull_emoji" in issues:
                 clean_no_skull = reply_clean.replace("💀", "")
                 suggested_repair = clean_no_skull.strip()
+            elif "vague_non_answer_on_why_probe" in issues:
+                suggested_repair = None  # needs LLM regen; can't auto-repair an explanation
 
         logger.debug(
             "critic.evaluated",
@@ -147,3 +205,4 @@ class ResponseQualityCritic:
             detected_issues=issues,
             suggested_repair=suggested_repair,
         )
+

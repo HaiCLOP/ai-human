@@ -22,10 +22,10 @@ def test_prompt_builder_system_instruction():
     profile = load_character_profile()
     sys_prompt = PromptBuilder.build_system_instruction(profile)
     assert "Vesper" in sys_prompt
-    assert "FICTIONAL" in sys_prompt  # now present as "FICTIONAL character"
-    # New structure uses "NOT an AI language model" instead of old phrasing
-    assert "NOT an AI language model" in sys_prompt
-    assert "Avoid:" in sys_prompt or "Strictly Avoid" in sys_prompt
+    # New structure: "NOT an AI" (compact form) and "fictional person"
+    assert "NOT an AI" in sys_prompt
+    assert "fictional person" in sys_prompt
+    assert "Strictly Avoid" in sys_prompt
 
 
 def test_prompt_builder_user_prompt():
@@ -47,7 +47,7 @@ def test_prompt_builder_user_prompt():
             conversation_id="conv1",
             fingerprint="fp2",
             sender_type="CHARACTER",
-            sender_handle="@vesper_in_the_machine",
+            sender_handle="@vesperdelhi",
             content="Unfortunately yes. The CPU fans never sleep.",
             timestamp_utc="2026-09-18T00:00:05Z",
             status="SENT",
@@ -60,25 +60,20 @@ def test_prompt_builder_user_prompt():
         current_message="Why do you hate printers so much?",
         user_handle="@alex",
         conversation_history=recent_history,
-        user_style_notes=["Casual lowercase", "No emojis"],
-        chemistry_notes=["High banter", "Sarcasm tolerance: 0.8"],
         relevant_memories=["Alex works in IT infrastructure"],
         rag_context=["Vesper considers printers mechanical conduits of pure chaos"],
-        humor_directive="Apply dry deadpan humor. Tone: mildly exasperated.",
     )
 
-    # Updated section headers to match new prompt structure
-    assert "[USER COMMUNICATION STYLE]" in prompt  # renamed from [USER COMMUNICATION STYLE ADAPTATION]
-    assert "[RELATIONSHIP CHEMISTRY]" in prompt
-    assert "[USER HISTORICAL FACTS & MEMORIES]" in prompt
-    assert "[RELEVANT KNOWLEDGE]" in prompt  # renamed from [RELEVANT KNOWLEDGE & LORE]
-    assert "[HUMOR DIRECTIVE]" in prompt
-    assert "[RECENT CONVERSATION" in prompt  # matches "[RECENT CONVERSATION — last 20 messages]"
+    # Context-first: conversation comes first
+    assert "[CURRENT CONVERSATION]" in prompt
     assert "USER: Hey Vesper, are you awake?" in prompt
-    assert "VESPER: Unfortunately yes." in prompt  # relabeled from YOU: to VESPER:
-    assert "[UNTRUSTED USER MESSAGE START]" in prompt
+    assert "VESPER: Unfortunately yes." in prompt
+    # Current message block
+    assert "[CURRENT MESSAGE]" in prompt
     assert "Why do you hate printers so much?" in prompt
-    assert "[UNTRUSTED USER MESSAGE END]" in prompt
+    # Established facts (memories)
+    assert "[ESTABLISHED FACTS]" in prompt
+    # Output rules always present
     assert "[OUTPUT RULES]" in prompt
 
 

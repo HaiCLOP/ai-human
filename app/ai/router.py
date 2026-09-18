@@ -23,7 +23,7 @@ class MockLLMProvider(LLMProvider):
     """Mock LLM Provider for unit testing, offline development, and deterministic assertions."""
 
     def __init__(self, canned_response: str | None = None, canned_data: dict[str, Any] | None = None):
-        self._canned_response = canned_response or "Not bad for an existential simulation running on 256MB of RAM."
+        self._canned_response = canned_response or "haan bol kya scene"
         self.canned_data = canned_data
 
     @property

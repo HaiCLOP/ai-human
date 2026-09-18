@@ -50,17 +50,18 @@ def test_rag_end_to_end_indexing_and_retrieval():
         db = DatabaseManager(db_path)
         db.initialize_schema()
 
-        lore_file = Path("knowledge/lore.md")
-        assert lore_file.exists()
+        identity_file = Path("knowledge/VESPER_IDENTITY.md")
+        assert identity_file.exists(), "VESPER_IDENTITY.md must exist in knowledge/"
 
         engine = EmbeddingEngine()
         indexer = KnowledgeIndexer(db=db, embedding_engine=engine)
-        chunk_count = indexer.index_file(lore_file)
+        chunk_count = indexer.index_file(identity_file)
         assert chunk_count > 0
 
         retriever = LocalRAGRetriever(db=db, embedding_engine=engine)
 
-        # Query specifically about printers
-        results = retriever.retrieve("Why do you hate printers and toner?", threshold=0.4, top_k=2)
+        # Query about Vesper's life context
+        results = retriever.retrieve("What is Vesper doing at school?", threshold=0.4, top_k=2)
         assert len(results) > 0
-        assert any("printer" in r.lower() for r in results)
+        assert any(any(w in r.lower() for w in ["school", "class", "pcm", "delhi", "study"]) for r in results)
+

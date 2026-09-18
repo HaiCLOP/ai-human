@@ -132,6 +132,35 @@ class SocialIntentAnalyzer:
         r"\b(kya matlab|samjha nahi|samjhi nahi|what do you mean|huh\?+|meaning\?)\b",
     ]
 
+    # --- New contextual act patterns ---
+
+    ASK_REASON_PATTERNS = [
+        r"^(kyuu+\??|kyu\??|why\?*|kyun\?*|kyu bata|why tho\?*)$",
+        r"^(kyu+)\s*\??$",
+    ]
+
+    FOLLOW_UP_PATTERNS = [
+        r"^(phir\??|then\??|aur\??|aur kya\??|kya hua fir\?*|then what\??|what happened\?*)$",
+        r"^(matlab\??|seriously\??|srsly\??|really\?*)$",
+        r"^(accha\?+|ohh\?+|hain\?+)$",
+    ]
+
+    EXCITEMENT_PATTERNS = [
+        r"\b(omg+|omgg+|bhai+|broooo|no wayyy+|WHAT|wait WHAT|bhai sun|literally|😭😭|😭😭😭)\b",
+    ]
+
+    BOREDOM_PATTERNS = [
+        r"^(bore|bored|bore ho gaya|bore ho gayi|pagal ho jaunga|kuch karo|kya karu|time nahi kat raha)\b",
+    ]
+
+    COUNTER_TEASE_PATTERNS = [
+        r"\b(tu bhi kam nahi|haan sahi mai hi|tu kaun sa better|accha mai hi galat|khud dekh|khud to)\b",
+    ]
+
+    EMOTIONAL_DISCLOSURE_PATTERNS = [
+        r"\b(actually suno|sach me|mai tujhe bata raha|mai tujhe bata rahi|honest rehun to|main serious hu|main serious hoon)\b",
+    ]
+
     @classmethod
     def analyze(
         cls,
@@ -140,6 +169,7 @@ class SocialIntentAnalyzer:
         contact_id: str | None = None,
     ) -> SocialIntent:
         """Analyze message text and optional conversation history into SocialIntent."""
+
         raw_text = text.strip()
         lower = raw_text.lower()
         signals: list[str] = []
@@ -459,6 +489,36 @@ class SocialIntentAnalyzer:
                 detected_signals=signals,
             )
 
+        # ── EARLY-EXIT: ASK_REASON before generic question_personal ──────────
+        # "kyu?" / "why?" / "kyun?" — short why-probe after Vesper said something
+        if any(re.match(p, lower) for p in cls.ASK_REASON_PATTERNS):
+            signals.append("ask_reason_early")
+            return SocialIntent(
+                social_act="ASK_REASON",
+                confidence=0.90,
+                seriousness=0.5,
+                hostility=0.0,
+                playfulness=0.2,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # ── EARLY-EXIT: FOLLOW_UP before generic question_personal ───────────
+        # "phir?" / "then?" / "aur?" — continuation probe
+        if any(re.match(p, lower) for p in cls.FOLLOW_UP_PATTERNS):
+            signals.append("follow_up_early")
+            return SocialIntent(
+                social_act="FOLLOW_UP",
+                confidence=0.88,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.3,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
         if any(re.search(p, lower) for p in cls.QUESTION_PERSONAL_PATTERNS) or "?" in raw_text:
             signals.append("question_personal_pattern")
             return SocialIntent(
@@ -486,7 +546,103 @@ class SocialIntentAnalyzer:
                 detected_signals=signals,
             )
 
-        # 18. Default fallback: evaluate length and punctuation
+        # 18. New contextual acts (checked before generic fallback)
+
+        # ASK_REASON — short "why?" style probes
+        if any(re.match(p, lower) for p in cls.ASK_REASON_PATTERNS):
+            signals.append("ask_reason_pattern")
+            return SocialIntent(
+                social_act="ASK_REASON",
+                confidence=0.80,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.4,
+                emotional_intensity=0.3,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # FOLLOW_UP — "phir?" "then?" "aur?" "matlab?"
+        if any(re.match(p, lower) for p in cls.FOLLOW_UP_PATTERNS):
+            signals.append("follow_up_pattern")
+            return SocialIntent(
+                social_act="FOLLOW_UP",
+                confidence=0.80,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.4,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # COUNTER_TEASE — user pushing back on Vesper's tease
+        if any(re.search(p, lower) for p in cls.COUNTER_TEASE_PATTERNS):
+            signals.append("counter_tease_pattern")
+            return SocialIntent(
+                social_act="counter_tease",
+                confidence=0.82,
+                seriousness=0.1,
+                hostility=0.1,
+                playfulness=0.8,
+                expected_reply_length="very_short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # EMOTIONAL_DISCLOSURE — user sharing something personal/honest
+        if any(re.search(p, lower) for p in cls.EMOTIONAL_DISCLOSURE_PATTERNS):
+            signals.append("emotional_disclosure_pattern")
+            return SocialIntent(
+                social_act="emotional_disclosure",
+                confidence=0.80,
+                seriousness=0.65,
+                hostility=0.0,
+                playfulness=0.1,
+                emotional_intensity=0.7,
+                expected_reply_length="medium",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # EXCITEMENT — OMGGG, bhai sun, wait WHAT
+        if any(re.search(p, lower) for p in cls.EXCITEMENT_PATTERNS):
+            signals.append("excitement_pattern")
+            return SocialIntent(
+                social_act="EXCITEMENT",
+                confidence=0.82,
+                seriousness=0.1,
+                hostility=0.0,
+                playfulness=0.85,
+                emotional_intensity=0.8,
+                expected_reply_length="very_short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # BOREDOM
+        if any(re.search(p, lower) for p in cls.BOREDOM_PATTERNS):
+            signals.append("boredom_pattern")
+            return SocialIntent(
+                social_act="BOREDOM",
+                confidence=0.78,
+                seriousness=0.2,
+                hostility=0.0,
+                playfulness=0.3,
+                emotional_intensity=0.4,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # 19. Contextual resolution — for very short messages that matched nothing
+        if context_history and len(words) <= 3:
+            resolved = cls._resolve_contextually(raw_text, lower, context_history, signals)
+            if resolved is not None:
+                return resolved
+
+        # 20. Default fallback
         length_category: Literal["very_short", "short", "medium", "long"] = "short"
         if len(words) <= 3:
             length_category = "very_short"
@@ -495,7 +651,7 @@ class SocialIntentAnalyzer:
 
         return SocialIntent(
             social_act="other",
-            confidence=0.5,
+            confidence=0.4,  # lowered from 0.5 to indicate genuine uncertainty
             seriousness=0.3,
             hostility=0.0,
             playfulness=0.4,
@@ -504,3 +660,73 @@ class SocialIntentAnalyzer:
             requires_response=True,
             detected_signals=["default_fallback"],
         )
+
+    @classmethod
+    def _resolve_contextually(
+        cls,
+        raw_text: str,
+        lower: str,
+        context_history: list[dict[str, str]],
+        signals: list[str],
+    ) -> SocialIntent | None:
+        """Contextual resolution for short ambiguous messages.
+
+        Uses the preceding conversation to infer intent rather than classifying in isolation.
+        """
+        # Get last Vesper message from history
+        last_vesper = ""
+        for entry in reversed(context_history):
+            if entry.get("role") == "vesper":
+                last_vesper = entry.get("text", "").strip()
+                break
+
+        last_vesper_words = len(last_vesper.split()) if last_vesper else 0
+
+        # Short "why?" probe after a substantive Vesper statement → ASK_REASON
+        if last_vesper_words > 3 and any(re.match(p, lower) for p in cls.ASK_REASON_PATTERNS):
+            signals.append("contextual:ask_reason_after_vesper_statement")
+            return SocialIntent(
+                social_act="ASK_REASON",
+                confidence=0.85,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.4,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # "phir?" / "then?" after substantive Vesper statement → FOLLOW_UP
+        if last_vesper_words > 3 and any(re.match(p, lower) for p in cls.FOLLOW_UP_PATTERNS):
+            signals.append("contextual:follow_up_after_vesper_statement")
+            return SocialIntent(
+                social_act="FOLLOW_UP",
+                confidence=0.85,
+                seriousness=0.3,
+                hostility=0.0,
+                playfulness=0.4,
+                expected_reply_length="short",
+                requires_response=True,
+                detected_signals=signals,
+            )
+
+        # Pure reaction (ohh, acha, hmm, single emoji) after substantive Vesper statement
+        is_reaction = (
+            len(raw_text.strip().split()) <= 2
+            and not raw_text.strip().endswith("?")
+        )
+        if last_vesper_words > 5 and is_reaction:
+            signals.append("contextual:reaction_to_vesper_statement")
+            return SocialIntent(
+                social_act="REACT_TO_PREVIOUS",
+                confidence=0.78,
+                seriousness=0.2,
+                hostility=0.0,
+                playfulness=0.4,
+                expected_reply_length="very_short",
+                requires_response=False,
+                detected_signals=signals,
+            )
+
+        return None
+
