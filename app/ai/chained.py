@@ -1,4 +1,4 @@
-﻿"""Chained Multi-Tier LLM Provider with automatic failover across different backends."""
+"""Chained Multi-Tier LLM Provider with automatic failover across different backends."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ class ChainedFallbackProvider(LLMProvider):
     """Multi-tier LLM Provider that cascades across distinct AI backends.
 
     Fallback Order:
-      1. Gemini (primary) -> gemini-2.5-flash
-      2. Groq Qwen (secondary) -> qwen/qwen3.8-27b
-      3. OpenRouter Llama (tertiary) -> meta-llama/llama-3.3-70b-instruct:free (auto fallback to paid slug)
+      1. OpenRouter Qwen (primary) -> qwen/qwen3.8-27b:free (auto-fallback to paid slug qwen/qwen3.8-27b)
+      2. Gemini (secondary) -> gemini-3.6-flash (fallback to gemini-2.5-flash)
+      3. OpenRouter Llama (tertiary) -> meta-llama/llama-3.3-70b-instruct:free (auto-fallback to paid slug)
     """
 
     def __init__(
@@ -36,25 +36,33 @@ class ChainedFallbackProvider(LLMProvider):
         if providers is not None:
             self.providers = list(providers)
         else:
-            # Default requested chain:
-            # 1. Gemini -> 2. Qwen (Groq) -> 3. OpenRouter (meta-llama/llama-3.3-70b-instruct:free)
-            gemini_model = "gemini-2.5-flash"
+            # Primary: OpenRouter Qwen (free tier with automatic paid fallback)
+            qwen_model = "qwen/qwen3.8-27b:free"
+            qwen_fallback = "qwen/qwen3.8-27b"
+            if settings.LLM_MODEL and "qwen" in settings.LLM_MODEL.lower():
+                qwen_model = settings.LLM_MODEL
+            if settings.LLM_FALLBACK_MODEL and "qwen" in settings.LLM_FALLBACK_MODEL.lower():
+                qwen_fallback = settings.LLM_FALLBACK_MODEL
+
+            # Secondary: Gemini Flash
+            gemini_model = "gemini-3.6-flash"
+            gemini_fallback = "gemini-2.5-flash"
             if settings.LLM_PROVIDER.lower() == "gemini" and settings.LLM_MODEL.startswith("gemini"):
                 gemini_model = settings.LLM_MODEL
 
             self.providers = [
                 (
-                    "gemini",
-                    GeminiProvider(
-                        model=gemini_model,
-                        fallback_model="gemini-3.6-flash",
+                    "openrouter-qwen",
+                    OpenRouterProvider(
+                        model=qwen_model,
+                        fallback_model=qwen_fallback,
                     ),
                 ),
                 (
-                    "groq-qwen",
-                    GroqProvider(
-                        model="qwen/qwen3.8-27b",
-                        fallback_model="llama-3.3-70b-versatile",
+                    "gemini",
+                    GeminiProvider(
+                        model=gemini_model,
+                        fallback_model=gemini_fallback,
                     ),
                 ),
                 (

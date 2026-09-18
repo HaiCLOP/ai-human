@@ -210,6 +210,8 @@ class OpenRouterProvider(LLMProvider):
     def _parse_and_repair_json(self, raw_text: str) -> dict[str, Any]:
         """Extract and repair JSON from potentially noisy or truncated model output."""
         cleaned = raw_text.strip()
+        # Remove reasoning / thought blocks emitted by models like Qwen or DeepSeek
+        cleaned = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", cleaned).strip()
         if "```" in cleaned:
             match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
             if match:
