@@ -36,13 +36,9 @@ class ChainedFallbackProvider(LLMProvider):
         if providers is not None:
             self.providers = list(providers)
         else:
-            # Primary: OpenRouter Qwen (free tier with automatic paid fallback)
-            qwen_model = "qwen/qwen3.8-27b:free"
-            qwen_fallback = "qwen/qwen3.8-27b"
-            if settings.LLM_MODEL and "qwen" in settings.LLM_MODEL.lower():
-                qwen_model = settings.LLM_MODEL
-            if settings.LLM_FALLBACK_MODEL and "qwen" in settings.LLM_FALLBACK_MODEL.lower():
-                qwen_fallback = settings.LLM_FALLBACK_MODEL
+            # Primary: OpenRouter model configured in settings (defaulting to NVIDIA Nemotron 3 Super)
+            primary_model = settings.LLM_MODEL or "nvidia/nemotron-3-super-120b-a12b:free"
+            primary_fallback = settings.LLM_FALLBACK_MODEL or "qwen/qwen3.8-27b"
 
             # Secondary: Gemini Flash
             gemini_model = "gemini-3.6-flash"
@@ -52,10 +48,10 @@ class ChainedFallbackProvider(LLMProvider):
 
             self.providers = [
                 (
-                    "openrouter-qwen",
+                    "openrouter-primary",
                     OpenRouterProvider(
-                        model=qwen_model,
-                        fallback_model=qwen_fallback,
+                        model=primary_model,
+                        fallback_model=primary_fallback,
                     ),
                 ),
                 (
