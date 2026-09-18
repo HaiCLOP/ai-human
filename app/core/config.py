@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     MONITOR_ALL_INBOX: bool = Field(default=False, description="Whether to poll entire inbox for new messages")
     INBOX_POLL_INTERVAL_SECONDS: float = Field(default=5.0, description="Polling interval in seconds")
     MAX_REPLIES_PER_HOUR: int = Field(default=30, description="Safety throttle: maximum dispatched replies/hr")
-    MIN_REPLY_DELAY_SECONDS: float = Field(default=3.0, description="Random delay floor before dispatching reply")
-    MAX_REPLY_DELAY_SECONDS: float = Field(default=7.0, description="Random delay ceiling before dispatching reply")
+    MIN_REPLY_DELAY_SECONDS: float = Field(default=1.0, description="Random delay floor before dispatching reply")
+    MAX_REPLY_DELAY_SECONDS: float = Field(default=3.5, description="Random delay ceiling before dispatching reply")
 
     # Observability & Logging
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO")

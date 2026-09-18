@@ -437,21 +437,21 @@ class InstagramBrowserAgent:
 
             logger.info("browser.typing_bubble", index=idx + 1, total=len(bubbles), length=len(clean_bubble))
 
-            # Simulate human keystrokes with randomized latency and micro-pauses
+            # Simulate human keystrokes with brisk natural typing speed
             for char in clean_bubble:
-                await page.keyboard.type(char, delay=random.uniform(35, 75))
+                await page.keyboard.type(char, delay=random.uniform(18, 40))
                 if char in [".", ",", "!", "?", "😭"]:
-                    await asyncio.sleep(random.uniform(0.1, 0.2))
+                    await asyncio.sleep(random.uniform(0.05, 0.12))
 
-            # Hesitation pause before sending bubble
-            await asyncio.sleep(random.uniform(0.2, 0.45))
+            # Brief hesitation pause before sending bubble
+            await asyncio.sleep(random.uniform(0.12, 0.25))
             await page.keyboard.press("Enter")
             self._record_sent_text(clean_bubble)
             logger.info("browser.bubble_dispatched", index=idx + 1, total=len(bubbles))
 
-            # If more bubbles remain, introduce a realistic inter-bubble thinking gap
+            # If more bubbles remain, introduce a brief inter-bubble gap
             if idx < len(bubbles) - 1:
-                inter_gap = random.uniform(0.6, 1.4)
+                inter_gap = random.uniform(0.3, 0.7)
                 await asyncio.sleep(inter_gap)
 
         # Randomized post-send cool down
