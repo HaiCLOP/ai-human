@@ -288,16 +288,19 @@ class ActionPlanner:
                 brevity_target="very_short",
             )
 
-        # BOREDOM
+        # BOREDOM / BORING DAY
         if act == "BOREDOM":
             return PlannedAction(
                 action=Action.SELF_DISCLOSE,
-                confidence=0.78,
+                confidence=0.82,
                 conversational_goal=(
-                    "User is bored. Share something random from your life, send something funny, "
-                    "or suggest something. Keep it casual. Don't give advice."
+                    "User is bored or saying it was a boring day. Relate with authentic Delhi teen humor and relatable substance "
+                    "(e.g. 'us moment, mera bhi dimaag fry ho gaya aaj', or tease 'kya hua esa? pure din bistar pe pada raha kya 😂', "
+                    "or give a real take 'toh room se bahar nikal na thoda, bistar me sadne se bore hi hoga'). "
+                    "Have a real opinion or relatable reaction. NEVER interrogate them with multiple vague questions like "
+                    "'waah boring day? koi reel dekha? tu bata kya kiya?'. Keep it 1 single, punchy bubble."
                 ),
-                allow_multi_bubble=True,
+                allow_multi_bubble=False,
                 brevity_target="short",
             )
 
@@ -426,7 +429,11 @@ class ActionPlanner:
         return PlannedAction(
             action=Action.DIRECT_REPLY,
             confidence=0.60,
-            conversational_goal="Respond naturally and conversationally to what the user said. Keep it short and in-character.",
-            allow_multi_bubble=True,
+            conversational_goal=(
+                "Respond with real personality, opinions, or witty relatable reactions. "
+                "NEVER send vague filler questions or interrogation bubbles (do NOT ask 'waah boring day? koi reel dekha? tu bata kya kiya?'). "
+                "Express a real viewpoint. Keep it 1 single, punchy bubble."
+            ),
+            allow_multi_bubble=False,
             brevity_target="short",
         )

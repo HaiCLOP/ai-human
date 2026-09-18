@@ -151,7 +151,7 @@ class SocialIntentAnalyzer:
     ]
 
     BOREDOM_PATTERNS = [
-        r"^(bore|bored|bore ho gaya|bore ho gayi|pagal ho jaunga|kuch karo|kya karu|time nahi kat raha)\b",
+        r"\b(bore|bored|boring|boring day|bore ho gaya|bore ho gayi|bore ho raha|bore ho rahi|pagal ho jaunga|kuch karne ko nahi|kya karu|time nahi kat raha|kuch interesting nahi|kuch khas nahi)\b",
     ]
 
     COUNTER_TEASE_PATTERNS = [
