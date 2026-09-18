@@ -1,4 +1,4 @@
-﻿"""Action Planner — determines WHAT Vesper should do before LLM generation.
+"""Action Planner — determines WHAT Vesper should do before LLM generation.
 
 Runs before PromptBuilder to give the model a clear directive instead of
 leaving it to figure out the social situation from raw context alone.
@@ -122,12 +122,14 @@ class ActionPlanner:
                     action=Action.CONTINUE_TOPIC,
                     confidence=0.80,
                     conversational_goal=(
-                        f"User answered your question. Acknowledge briefly and continue the conversation naturally. "
+                        "User answered your question. Acknowledge their answer with full context and continue the conversation naturally in complete sentences. "
+                        "Always finish your thought — never send an incomplete or cut-off fragment. "
                         "Do NOT repeat the question. Do NOT ask the same thing again."
                     ),
                     allow_multi_bubble=True,
-                    brevity_target="short",
+                    brevity_target="medium",
                 )
+
 
         # ═══════════════════════════════════════════════════════
         # PRIORITY 2 — INTERVIEW MODE GUARD (hard block on questions)

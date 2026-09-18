@@ -118,15 +118,15 @@ class ResponseQualityCritic:
         in_count = len(incoming_words)
         out_count = len(reply_words)
 
-        if in_count <= 2 and out_count >= 15:
+        if in_count <= 2 and out_count >= 16:
             issues.append(f"effort_parity_overanswering:in_{in_count}_got_{out_count}_words")
-            score -= 0.5
-        elif intent.expected_reply_length == "very_short" and out_count > 12:
+            score -= 0.45
+        elif intent.expected_reply_length == "very_short" and out_count > 18:
             issues.append(f"effort_parity_too_long:expected_very_short_got_{out_count}_words")
-            score -= 0.35
-        elif in_count <= 4 and out_count > 18:
+            score -= 0.25
+        elif in_count <= 4 and out_count > 32:
             issues.append(f"effort_parity_overanswering:in_{in_count}_got_{out_count}_words")
-            score -= 0.4
+            score -= 0.3
 
         # 5. Ending Period on casual single-line message
         if "\n" not in reply_clean and reply_clean.endswith(".") and not reply_clean.endswith("..."):
@@ -175,10 +175,11 @@ class ResponseQualityCritic:
             "forbidden_skull_emoji" in issues
             or "rhetorical_insult_echo" in issues
             or "defensive_justification_on_banter" in issues
-            or any("effort_parity_overanswering" in iss for iss in issues)
+            or (in_count <= 2 and out_count >= 16)
             or any("ai_tell_pattern" in iss for iss in issues)
             or "vague_non_answer_on_why_probe" in issues
         )
+
         passes = score >= 0.6 and not has_critical_failure
 
         # Construct suggested repair if failed

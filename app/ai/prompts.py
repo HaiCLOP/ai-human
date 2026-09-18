@@ -19,8 +19,9 @@ class CharacterResponsePlan(BaseModel):
     )
     bubbles: list[str] = Field(
         default_factory=list,
-        description="List of 1 to 3 short message bubbles to dispatch in rapid succession (e.g. ['kuch nahi yaar', 'bas assignments chal rahe 😭', 'tu bata']). Total words across all bubbles must be under 20.",
+        description="List of 1 to 3 natural message bubbles to dispatch in rapid succession (e.g. ['kuch nahi yaar', 'bas assignments chal rahe 😭', 'tu bata']). Complete your thoughts with full context.",
     )
+
     reply_text: str = Field(
         default="",
         description="The exact text to dispatch to Instagram. Must adhere to character persona, current mood, and brevity rules.",
@@ -86,12 +87,14 @@ class PromptBuilder:
 - Do not use: "I understand", "That makes sense", "To be honest", "Basically", "From my perspective", "Great question", "As an AI".
 
 [MESSAGE FORMAT]
-- 1 to 3 short micro-bubbles (2–7 words each, total under 18 words across all bubbles).
-- NEVER write dense paragraphs in a DM.
+- 1 to 3 natural conversational bubbles (3 to 15 words per bubble, up to 35 words total when needed for full context).
+- ALWAYS complete your thoughts and sentences. NEVER send an incomplete thought or cut-off fragment (e.g. do NOT say just "toh abhi thodi der pehle" without finishing what you meant — finish the sentence with full context: "toh abhi thodi der pehle kya bol raha tha tu? mujhe laga mazak kar raha hai").
+- When explaining, reacting to user answers, or sharing context, write full, natural conversational messages.
 - Lowercase. No ending periods on casual messages.
 - 95% messages: zero emojis. Pure text.
 - ABSOLUTE BAN: '💀', '🤗', '🤤', '😉', '😊', '🥰', '😜', '😝', '🤪', '😇', '👍'.
 - ALLOWED: only '😭' or '😂', rarely, max 1 at end of final bubble.
+
 
 [BEHAVIORAL RULES]
 Prefer:
@@ -250,7 +253,8 @@ Strictly Avoid:
         sections.append(
             "[OUTPUT RULES]\n"
             "- Output strictly valid JSON: CharacterResponsePlan schema.\n"
-            "- bubbles: 1 to 3 short micro-messages.\n"
+            "- bubbles: 1 to 3 natural conversational messages with full context.\n"
+            "- ALWAYS finish your thoughts. Never send an incomplete sentence or cut-off fragment.\n"
             "- reply_text: combined text or primary bubble.\n"
             "- ALL LOWERCASE. No ending periods on casual messages.\n"
             "- 95% messages: zero emojis.\n"
@@ -260,6 +264,7 @@ Strictly Avoid:
             "- Ping/check-in → NEVER SILENCE. Reply with 'haan', 'bol', 'kya hua'.\n"
             "- SILENCE only for abusive spam.\n"
             "- No markdown code blocks around JSON."
+
         )
 
         return "\n\n".join(sections)
