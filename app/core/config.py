@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     BASE_DIR: Path = Field(default_factory=lambda: Path(__file__).resolve().parent.parent.parent)
 
     # LLM Settings
-    LLM_PROVIDER: str = Field(default="gemini", description="AI provider identifier: 'gemini', 'groq', 'openrouter', 'mock'")
+    LLM_PROVIDER: str = Field(default="gemini", description="AI provider identifier: 'chained', 'gemini', 'groq', 'openrouter', 'mock'")
+
+
     LLM_MODEL: str = Field(default="gemini-3.8-flash", description="Model name/identifier")
     LLM_FALLBACK_MODEL: str = Field(default="gemini-3.6-flash", description="Fallback model if primary experiences capacity issues")
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")

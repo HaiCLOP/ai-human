@@ -577,6 +577,23 @@ class InstagramBrowserAgent:
         await self.dismiss_popups(page)
         await asyncio.sleep(1.5)
 
+        # Extract profile identity if present (e.g. "Arnav Srivastava (@haiclop) • Instagram")
+        try:
+            page_title = await page.title()
+            if f"(@{clean_handle})" in page_title:
+                real_name = page_title.split(f"(@{clean_handle})")[0].strip()
+                if real_name and real_name.lower() != clean_handle.lower():
+                    logger.info("browser.profile_name_detected", user=clean_handle, name=real_name)
+                    conv_id = f"thread_{clean_handle}"
+                    self.conv_mgr.conv_repo.get_or_create_conversation(conv_id, participant_handle=f"@{clean_handle}")
+                    # Avoid duplicate insert if already present
+                    existing = self.conv_mgr.memory_mgr.repo.get_memories_for_conversation(conv_id)
+                    if not any(f"name is {real_name.lower()}" in m.statement.lower() for m in existing):
+                        self.conv_mgr.memory_mgr.repo.add_memory(conv_id, "FACT", f"User's name is {real_name}", confidence=1.0)
+        except Exception as exc:
+            logger.debug("browser.profile_name_extract_failed", error=str(exc))
+
+
         # Check if chat is ALREADY open on page
         input_el = await self.find_element_with_fallbacks(page, "message_input")
         if input_el:

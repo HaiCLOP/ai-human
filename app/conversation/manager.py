@@ -215,6 +215,29 @@ class ConversationManager:
             relevant_memories = self.memory_mgr.get_relevant_memories(conversation_id, clean_text)
             rag_chunks = self.rag_retriever.retrieve(clean_text)
 
+            # 8a. Contact name resolution — extract known name from memories
+            contact_known_name = None
+            for mem in relevant_memories:
+                import re as _re
+                name_match = _re.search(r"User's name is ([A-Za-z]+)", mem, _re.IGNORECASE)
+                if name_match:
+                    contact_known_name = name_match.group(1).strip()
+                    break
+            # Also check ALL memories (not just top-k) for name fact
+            if not contact_known_name:
+                all_mems = self.memory_mgr.repo.get_memories_for_conversation(conversation_id)
+                for m in all_mems:
+                    import re as _re
+                    if "name is" in m.statement.lower():
+                        name_m = _re.search(r"name is ([A-Za-z]+)", m.statement, _re.IGNORECASE)
+                        if name_m:
+                            contact_known_name = name_m.group(1).strip()
+                            break
+
+            # Display name: prefer real name, fall back to @handle
+            display_name = contact_known_name or sender_handle.lstrip("@")
+
+
             routine_context = (
                 f"Current Time: {now.strftime('%A %H:%M')}, Activity: {current_activity.activity}, "
                 f"Location: {current_activity.location}, State: {effective_avail.value}"
@@ -370,6 +393,20 @@ class ConversationManager:
 
             # Build conversation state notes for prompt
             conv_state_notes: list[str] = []
+
+            # ── WHO YOU'RE TALKING TO (always first in state notes) ──────────
+            who_block = f"You are talking to: {display_name}"
+            if contact_known_name:
+                who_block += f" (Instagram: {sender_handle})"
+            conv_state_notes.append(who_block)
+
+            # ── Known facts about this person (not top-k filtered, stable facts) ──
+            if not contact_known_name:
+                # No name yet — note that we don't know their name
+                conv_state_notes.append("You don't know their real name yet.")
+            else:
+                conv_state_notes.append(f"You know their real name: {contact_known_name}")
+
             if current_conv_state.current_topic:
                 conv_state_notes.append(f"Active topic: {current_conv_state.current_topic}")
             if current_conv_state.social_mode != "casual":
@@ -391,7 +428,7 @@ class ConversationManager:
             system_instruction = PromptBuilder.build_system_instruction(self.profile)
             user_prompt = PromptBuilder.build_prompt(
                 current_message=clean_text if not batched_texts else "",
-                user_handle=sender_handle,
+                user_handle=display_name,   # use real name if known
                 conversation_history=history,
                 relevant_memories=relevant_memories,
                 rag_context=rag_chunks,
@@ -405,6 +442,7 @@ class ConversationManager:
                 historical_examples=historical_turn_examples,
                 planned_action=planned_action_str,
                 conversation_state_notes=conv_state_notes,
+
                 now_block=now_block_str,
                 # Legacy pass-through (silently accepted)
                 user_style_notes=style_notes,

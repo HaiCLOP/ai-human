@@ -96,3 +96,36 @@ def test_memory_manager_extraction_and_retrieval(temp_db):
     relevant = mgr.get_relevant_memories("thread_test_mem", "How is the weather in Tokyo?")
     assert len(relevant) >= 1
     assert any("Tokyo" in r for r in relevant)
+
+
+def test_hinglish_preference_and_identity_extraction(temp_db):
+    """Verify that Vesper extracts preferences (e.g. Mai nashe nahi karta) and identity from Hinglish."""
+    conv_repo = ConversationRepository(temp_db)
+    conv_repo.get_or_create("thread_test_hinglish", participant_handle="@haiclop")
+
+    mgr = MemoryManager(temp_db)
+
+    # User declares they don't do nashe / drugs
+    extracted = mgr.extract_and_persist_facts(
+        "thread_test_hinglish",
+        "Mai nashe nahi karta",
+    )
+    assert len(extracted) >= 1
+    statements = [e.statement for e in extracted]
+    assert any("does not drink/do drugs" in s or "nashe" in s for s in statements)
+
+    # User introduces their name
+    name_extracted = mgr.extract_and_persist_facts(
+        "thread_test_hinglish",
+        "mera naam Arnav hai",
+    )
+    assert len(name_extracted) >= 1
+    assert any("Arnav" in e.statement for e in name_extracted)
+
+    # On an unrelated query ("aur bata"), core preferences & facts are still retrieved
+    relevant = mgr.get_relevant_memories("thread_test_hinglish", "aur bata kya scene hai")
+    assert len(relevant) >= 2
+    relevant_text = " ".join(relevant)
+    assert "Arnav" in relevant_text
+    assert "does not drink/do drugs" in relevant_text or "nashe" in relevant_text
+

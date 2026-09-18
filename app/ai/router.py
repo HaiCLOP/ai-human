@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from app.ai.chained import ChainedFallbackProvider
 from app.ai.gemini import GeminiProvider
 from app.ai.groq import GroqProvider
 from app.ai.openrouter import OpenRouterProvider
@@ -87,7 +88,9 @@ def get_llm_provider(force_mock: bool = False) -> LLMProvider:
     settings = get_settings()
     provider_name = "mock" if force_mock else settings.LLM_PROVIDER.lower()
 
-    if provider_name == "gemini":
+    if provider_name in ("chained", "auto", "fallback"):
+        _provider_instance = ChainedFallbackProvider()
+    elif provider_name == "gemini":
         _provider_instance = GeminiProvider()
     elif provider_name == "groq":
         _provider_instance = GroqProvider()
@@ -96,7 +99,8 @@ def get_llm_provider(force_mock: bool = False) -> LLMProvider:
     elif provider_name == "mock":
         _provider_instance = MockLLMProvider()
     else:
-        raise ConfigurationException(f"Unsupported LLM provider: '{provider_name}'. Supported: 'gemini', 'groq', 'openrouter', 'mock'.")
+        raise ConfigurationException(f"Unsupported LLM provider: '{provider_name}'. Supported: 'chained', 'gemini', 'groq', 'openrouter', 'mock'.")
 
     logger.info("ai.provider_resolved", provider=provider_name)
     return _provider_instance
+

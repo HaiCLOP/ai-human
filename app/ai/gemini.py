@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
 from typing import Any, TypeVar
 
@@ -32,6 +33,7 @@ class GeminiProvider(LLMProvider):
         self,
         api_key: str | None = None,
         model: str | None = None,
+        fallback_model: str | None = None,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         timeout_seconds: float | None = None,
@@ -40,11 +42,12 @@ class GeminiProvider(LLMProvider):
         settings = get_settings()
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model = model or settings.LLM_MODEL
-        self.fallback_model = settings.LLM_FALLBACK_MODEL
+        self.fallback_model = fallback_model or settings.LLM_FALLBACK_MODEL
         self.temperature = temperature if temperature is not None else settings.LLM_TEMPERATURE
         self.max_output_tokens = max_output_tokens if max_output_tokens is not None else settings.LLM_MAX_OUTPUT_TOKENS
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.LLM_TIMEOUT_SECONDS
         self.max_retries = max_retries if max_retries is not None else settings.LLM_MAX_RETRIES
+
 
         self._client = None
 
@@ -147,7 +150,6 @@ class GeminiProvider(LLMProvider):
                     cleaned_json = raw_text.strip()
                     # Strip code fences if present
                     if "```" in cleaned_json:
-                        import re
                         fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_json)
                         if fence_match:
                             cleaned_json = fence_match.group(1).strip()

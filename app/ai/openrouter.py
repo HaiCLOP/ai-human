@@ -153,6 +153,12 @@ class OpenRouterProvider(LLMProvider):
                         await asyncio.sleep(wait)
                         continue
 
+                    if response.status_code == 404 and ":free" in payload.get("model", ""):
+                        fallback_slug = payload["model"].replace(":free", "")
+                        logger.warning("openrouter.free_slug_discontinued_retrying_standard", original=payload["model"], fallback=fallback_slug)
+                        payload["model"] = fallback_slug
+                        response = await client.post(self.BASE_URL, headers=headers, json=payload)
+
                     if response.status_code != 200:
                         raise LLMException(f"OpenRouter HTTP {response.status_code}: {response.text}")
 

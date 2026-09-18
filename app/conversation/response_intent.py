@@ -115,20 +115,31 @@ def build_response_intent(
 
 
 def format_now_block(dt: datetime | None = None) -> str:
-    """Format the current IST date/time as a structured [NOW] block for the prompt."""
+    """Format the current IST date/time as a structured [NOW] block for the prompt.
+
+    Always converts the input datetime to IST before formatting,
+    so UTC datetimes from the runtime are displayed correctly.
+    """
     ist = _get_ist_zone()
     dt = dt or datetime.now(ist)
-    day = dt.strftime("%A")                    # Thursday
-    date_str = dt.strftime("%d %B %Y")
-    hour = dt.hour
-    minute = dt.strftime("%M")
 
-    if hour < 12:
+    # Always convert to IST for display (handles both UTC and already-IST inputs)
+    try:
+        dt_ist = dt.astimezone(ist)
+    except Exception:
+        dt_ist = dt  # fallback if conversion fails
+
+    day = dt_ist.strftime("%A")           # e.g. Friday
+    date_str = dt_ist.strftime("%d %B %Y")  # e.g. 18 September 2026
+    hour = dt_ist.hour
+    minute = dt_ist.strftime("%M")
+
+    if hour == 0:
+        period = "night (very late)"
+        time_str = f"12:{minute} AM"
+    elif hour < 12:
         period = "morning"
-        if hour == 0:
-            time_str = f"12:{minute} AM"
-        else:
-            time_str = f"{hour}:{minute} AM"
+        time_str = f"{hour}:{minute} AM"
     elif hour == 12:
         period = "afternoon"
         time_str = f"12:{minute} PM"
@@ -141,10 +152,6 @@ def format_now_block(dt: datetime | None = None) -> str:
     else:
         period = "night"
         time_str = f"{hour - 12}:{minute} PM"
-
-    # Handle midnight edge case
-    if hour == 0:
-        period = "night (very late)"
 
     return f"[NOW]\n{day}, {date_str} — {time_str} IST ({period})"
 

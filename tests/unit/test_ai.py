@@ -42,6 +42,43 @@ def test_router_mock_resolution():
     assert isinstance(provider, MockLLMProvider)
 
 
+@pytest.mark.asyncio
+async def test_chained_provider_cascades_on_failure():
+    """Verify that ChainedFallbackProvider cascades through providers upon error."""
+    from app.ai.chained import ChainedFallbackProvider
+    from app.core.exceptions import LLMException
+
+    class FailingProvider(MockLLMProvider):
+        async def generate(self, *args, **kwargs):
+            raise LLMException("Simulated API outage")
+
+    class WorkingProvider(MockLLMProvider):
+        pass
+
+    fail_p = FailingProvider()
+    work_p = WorkingProvider(canned_response="Fallback succeeded!")
+
+    chain = ChainedFallbackProvider(providers=[("failing", fail_p), ("working", work_p)])
+    resp = await chain.generate("hello")
+    assert resp.content == "Fallback succeeded!"
+
+
+@pytest.mark.asyncio
+async def test_chained_provider_all_fail_raises():
+    """Verify that ChainedFallbackProvider raises when all tiers fail."""
+    from app.ai.chained import ChainedFallbackProvider
+    from app.core.exceptions import LLMException
+
+    class FailingProvider(MockLLMProvider):
+        async def generate(self, *args, **kwargs):
+            raise LLMException("Outage")
+
+    chain = ChainedFallbackProvider(providers=[("f1", FailingProvider()), ("f2", FailingProvider())])
+    with pytest.raises(LLMException):
+        await chain.generate("hello")
+
+
+
 def test_response_validator_valid_case():
     validator = ResponseValidator(max_length=400)
     res = validator.validate("That sounds completely absurd, but I admire the dedication.")
